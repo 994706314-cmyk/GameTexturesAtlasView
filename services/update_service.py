@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 
 # GitHub API 地址
 GITHUB_API_LATEST = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+GITHUB_API_TAGS = "https://api.github.com/repos/{owner}/{repo}/tags"
 
 
 def _compare_versions(local: str, remote: str) -> int:
@@ -92,14 +93,42 @@ class UpdateChecker(QObject):
         self._current_version = current_version
 
     def run(self):
-        """在后台线程执行检查"""
+        """在后台线程执行检查（优先 Release，回退 Tags）"""
+        ctx = _create_ssl_context()
+
+        # ---- 第一步：尝试 releases/latest ----
+        release_result = self._check_release(ctx)
+        if release_result is not None:
+            # Release 存在且有更新，直接返回
+            if release_result.has_update:
+                self.check_finished.emit(release_result)
+                return
+            # Release 存在但无更新 → 继续用 Tags 二次确认
+            # （可能 tag 比 release 更新，但还没发 release）
+
+        # ---- 第二步：Tags 回退 ----
+        tag_result = self._check_tags(ctx)
+        if tag_result is not None and tag_result.has_update:
+            self.check_finished.emit(tag_result)
+            return
+
+        # ---- 两边都没有更新 ----
+        if release_result is not None:
+            self.check_finished.emit(release_result)
+        elif tag_result is not None:
+            self.check_finished.emit(tag_result)
+        else:
+            self.check_finished.emit(UpdateCheckResult(error="尚无发布版本"))
+
+    # ------------------------------------------------------------------
+    def _check_release(self, ctx) -> Optional[UpdateCheckResult]:
+        """通过 releases/latest 检查"""
         try:
             url = GITHUB_API_LATEST.format(owner=self._owner, repo=self._repo)
             req = Request(url)
             req.add_header("Accept", "application/vnd.github.v3+json")
             req.add_header("User-Agent", "TexturesAtlasView-Updater")
 
-            ctx = _create_ssl_context()
             with urlopen(req, context=ctx, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
@@ -121,23 +150,68 @@ class UpdateChecker(QObject):
 
             has_update = _compare_versions(self._current_version, tag) > 0
 
-            result = UpdateCheckResult(
+            return UpdateCheckResult(
                 has_update=has_update,
                 latest_version=tag.lstrip("vV"),
                 release_notes=body,
                 download_url=download_url,
             )
-            self.check_finished.emit(result)
-
         except HTTPError as e:
             if e.code == 404:
-                self.check_finished.emit(UpdateCheckResult(error="尚无发布版本"))
-            else:
-                self.check_finished.emit(UpdateCheckResult(error=f"HTTP 错误: {e.code}"))
+                return None  # 没有 release，回退到 tags
+            self.check_finished.emit(UpdateCheckResult(error=f"HTTP 错误: {e.code}"))
+            return None
         except URLError as e:
             self.check_finished.emit(UpdateCheckResult(error=f"网络错误: {e.reason}"))
+            return None
         except Exception as e:
             self.check_finished.emit(UpdateCheckResult(error=str(e)))
+            return None
+
+    # ------------------------------------------------------------------
+    def _check_tags(self, ctx) -> Optional[UpdateCheckResult]:
+        """通过 tags 列表检查（回退方案）"""
+        try:
+            url = GITHUB_API_TAGS.format(owner=self._owner, repo=self._repo)
+            req = Request(url)
+            req.add_header("Accept", "application/vnd.github.v3+json")
+            req.add_header("User-Agent", "TexturesAtlasView-Updater")
+
+            with urlopen(req, context=ctx, timeout=15) as resp:
+                tags_data = json.loads(resp.read().decode("utf-8"))
+
+            if not tags_data:
+                return None
+
+            # 找到最高版本的 tag
+            best_tag = ""
+            best_cmp = 0
+            for item in tags_data:
+                t = item.get("name", "")
+                cmp = _compare_versions(self._current_version, t)
+                if cmp > best_cmp:
+                    best_cmp = cmp
+                    best_tag = t
+                elif cmp == 0 and not best_tag:
+                    best_tag = t
+
+            if not best_tag:
+                # 没有比当前更新的 tag，取列表第一个作为展示
+                best_tag = tags_data[0].get("name", "")
+
+            has_update = _compare_versions(self._current_version, best_tag) > 0
+
+            # Tags 没有 release notes / 下载链接，构造 GitHub Release 页面链接
+            release_page = f"https://github.com/{self._owner}/{self._repo}/releases/tag/{best_tag}"
+
+            return UpdateCheckResult(
+                has_update=has_update,
+                latest_version=best_tag.lstrip("vV"),
+                release_notes=f"发现新 Tag {best_tag}，请前往 GitHub 查看详情。\n{release_page}" if has_update else "",
+                download_url="",
+            )
+        except Exception:
+            return None
 
 
 class UpdateDownloader(QObject):
