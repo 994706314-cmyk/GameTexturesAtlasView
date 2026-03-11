@@ -13,7 +13,7 @@ from utils.constants import (
     DEFAULT_UNDO_STEPS, DEFAULT_SHORTCUTS, SHORTCUT_NAMES,
     COLOR_PRIMARY, VALID_TEXTURE_SIZES, DEFAULT_WIDTH_COMPRESS_MAP,
     DEFAULT_EXCLUDE_SUFFIXES, DEFAULT_WIDTH_COLOR_MAP,
-    DEFAULT_THUMBNAIL_QUALITY,
+    DEFAULT_THUMBNAIL_QUALITY, DEFAULT_SMOOTH_MODE,
     DEFAULT_ATLAS_SUFFIX, DEFAULT_FUZZY_THRESHOLD, APP_VERSION,
     DEFAULT_MIN_TIER_SIZE, REVERSE_COLOR_PRIMARY,
     GITHUB_OWNER, GITHUB_REPO,
@@ -109,6 +109,28 @@ class SettingsDialog(QDialog):
         thumb_hint.setProperty("class", "subtext")
         thumb_hint.setWordWrap(True)
         g_layout.addWidget(thumb_hint)
+
+        # 流畅模式
+        smooth_label = QLabel("流畅模式")
+        smooth_label.setStyleSheet("font-size: 12px; font-weight: 500;")
+        g_layout.addWidget(smooth_label)
+
+        self._smooth_mode_check = QCheckBox("启用流畅模式（60~120fps 丝滑动效）")
+        self._smooth_mode_check.setChecked(
+            self._settings.get("smooth_mode", DEFAULT_SMOOTH_MODE)
+        )
+        self._smooth_mode_check.setStyleSheet(_CHECKBOX_STYLE)
+        g_layout.addWidget(self._smooth_mode_check)
+
+        smooth_hint = QLabel(
+            "⚠ 开启后将启用 OpenGL 硬件加速、高帧率动画及渲染优化，\n"
+            "动效更加丝滑流畅，但会占用更多 GPU 和内存资源。\n"
+            "低配置设备上可能反而降低性能，请酌情开启。"
+        )
+        smooth_hint.setStyleSheet("font-size: 10px; color: #FF9800;")
+        smooth_hint.setProperty("class", "subtext")
+        smooth_hint.setWordWrap(True)
+        g_layout.addWidget(smooth_hint)
 
         # 导入排除后缀
         exclude_group = QGroupBox("导入排除后缀")
@@ -482,6 +504,15 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(changelog_title)
 
         changelog_text = QLabel(
+            "V1.6.0（2026-03-11）\n"
+            "  · 新增：设置→通用→流畅模式（默认关闭）\n"
+            "  · 开启后启用 OpenGL 硬件加速渲染\n"
+            "  · 视口改为局部重绘（MinimalViewportUpdate）\n"
+            "  · 缩略图预缓存，paint() 不再每帧 SmoothTransformation\n"
+            "  · 禁用 CPU 密集的 DropShadowEffect，改为手绘轻量阴影\n"
+            "  · 网格背景预渲染到 Pixmap 缓存，不再逐线绘制\n"
+            "  · 动画引擎采用 Apple 风格贝塞尔缓动曲线（弹性回弹/超调）\n"
+            "  · 动效帧率提升至 60~120fps，丝滑流畅\n\n"
             "V1.5.1（2026-03-11）\n"
             "  · 修复：存档文件分享后缩略图丢失（缩略图嵌入存档）\n"
             "  · 修复：检查模式组内区域可展开/收起，不再截断\n\n"
@@ -587,6 +618,7 @@ class SettingsDialog(QDialog):
             "exclude_suffixes": exclude_suffixes,
             "width_color_map": width_color_map,
             "thumbnail_quality": self._thumb_quality_combo.currentData(),
+            "smooth_mode": self._smooth_mode_check.isChecked(),
             "atlas_suffix": self._atlas_suffix_input.text().strip() or DEFAULT_ATLAS_SUFFIX,
             "fuzzy_threshold": self._fuzzy_threshold_spin.value(),
             "min_tier_size": self._min_tier_combo.currentData(),

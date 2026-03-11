@@ -12,7 +12,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QPen, QColor, QWheelEvent, QDragEnterEvent, QDropEvent,
-    QMouseEvent, QBrush, QKeyEvent,
+    QMouseEvent, QBrush, QKeyEvent, QPixmap,
 )
 
 from models.atlas_model import AtlasModel
@@ -35,11 +35,21 @@ class AtlasGraphicsScene(QGraphicsScene):
         super().__init__(parent)
         self._atlas_size = atlas_size
         self._show_grid = True
+        self._grid_cache: QPixmap | None = None  # 网格 pixmap 缓存
+        self._grid_cache_size: int = 0
+        self._smooth_mode = False
         margin = 200
         self.setSceneRect(-margin, -margin, atlas_size + margin * 2, atlas_size + margin * 2)
 
+    def set_smooth_mode(self, enabled: bool):
+        """切换流畅模式"""
+        self._smooth_mode = enabled
+        self._grid_cache = None  # 失效缓存
+        self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
+
     def set_atlas_size(self, size: int):
         self._atlas_size = size
+        self._grid_cache = None  # 失效缓存
         margin = 200
         self.setSceneRect(-margin, -margin, size + margin * 2, size + margin * 2)
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
@@ -47,6 +57,56 @@ class AtlasGraphicsScene(QGraphicsScene):
     def set_show_grid(self, show: bool):
         self._show_grid = show
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
+
+    def _ensure_grid_cache(self):
+        """构建/重建网格 pixmap 缓存（仅在流畅模式启用时使用）"""
+        if self._grid_cache and self._grid_cache_size == self._atlas_size:
+            return
+        size = self._atlas_size
+        pm = QPixmap(size, size)
+        pm.fill(QColor(30, 30, 30))
+
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        step_small = GRID_UNIT
+        step_mid = 64
+        step_major = 256
+
+        minor_pen = QPen(QColor(70, 70, 70, 180))
+        minor_pen.setWidthF(0)
+        mid_pen = QPen(QColor(100, 100, 100, 220))
+        mid_pen.setWidthF(0)
+        major_pen = QPen(QColor(140, 140, 140, 255))
+        major_pen.setWidthF(1.5)
+
+        # 竖线
+        x = step_small
+        while x < size:
+            if x % step_major == 0:
+                p.setPen(major_pen)
+            elif x % step_mid == 0:
+                p.setPen(mid_pen)
+            else:
+                p.setPen(minor_pen)
+            p.drawLine(x, 0, x, size)
+            x += step_small
+
+        # 横线
+        y = step_small
+        while y < size:
+            if y % step_major == 0:
+                p.setPen(major_pen)
+            elif y % step_mid == 0:
+                p.setPen(mid_pen)
+            else:
+                p.setPen(minor_pen)
+            p.drawLine(0, y, size, y)
+            y += step_small
+
+        p.end()
+        self._grid_cache = pm
+        self._grid_cache_size = size
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         super().drawBackground(painter, rect)
@@ -57,71 +117,77 @@ class AtlasGraphicsScene(QGraphicsScene):
         full_scene = self.sceneRect()
         painter.fillRect(full_scene, QBrush(QColor(20, 20, 20)))
 
-        # 合图区域背景
         atlas_rect = QRectF(0, 0, self._atlas_size, self._atlas_size)
-        painter.fillRect(atlas_rect, QBrush(QColor(30, 30, 30)))
 
-        if self._show_grid:
-            visible = rect.intersected(atlas_rect)
-            if not visible.isEmpty():
-                step_small = GRID_UNIT   # 16px
-                step_mid = 64
-                step_major = 256
+        if self._show_grid and self._smooth_mode:
+            # 流畅模式：使用预渲染的 pixmap 缓存
+            self._ensure_grid_cache()
+            painter.drawPixmap(0, 0, self._grid_cache)
+        else:
+            # 合图区域背景
+            painter.fillRect(atlas_rect, QBrush(QColor(30, 30, 30)))
 
-                # 16px 细网格线 - 更明亮
-                minor_pen = QPen(QColor(70, 70, 70, 180))
-                minor_pen.setWidthF(0)
-                minor_pen.setCosmetic(True)
+            if self._show_grid:
+                visible = rect.intersected(atlas_rect)
+                if not visible.isEmpty():
+                    step_small = GRID_UNIT   # 16px
+                    step_mid = 64
+                    step_major = 256
 
-                # 64px 中等网格线 - 更明亮
-                mid_pen = QPen(QColor(100, 100, 100, 220))
-                mid_pen.setWidthF(0)
-                mid_pen.setCosmetic(True)
+                    # 16px 细网格线 - 更明亮
+                    minor_pen = QPen(QColor(70, 70, 70, 180))
+                    minor_pen.setWidthF(0)
+                    minor_pen.setCosmetic(True)
 
-                # 256px 粗网格线 - 更明亮加粗
-                major_pen = QPen(QColor(140, 140, 140, 255))
-                major_pen.setWidthF(1.5)
-                major_pen.setCosmetic(True)
+                    # 64px 中等网格线 - 更明亮
+                    mid_pen = QPen(QColor(100, 100, 100, 220))
+                    mid_pen.setWidthF(0)
+                    mid_pen.setCosmetic(True)
 
-                left = max(0, int(visible.left()) // step_small * step_small)
-                right = min(self._atlas_size, int(visible.right()) + step_small)
-                top = max(0, int(visible.top()) // step_small * step_small)
-                bottom = min(self._atlas_size, int(visible.bottom()) + step_small)
+                    # 256px 粗网格线 - 更明亮加粗
+                    major_pen = QPen(QColor(140, 140, 140, 255))
+                    major_pen.setWidthF(1.5)
+                    major_pen.setCosmetic(True)
 
-                vt = max(0, int(visible.top()))
-                vb = min(self._atlas_size, int(visible.bottom()))
-                vl = max(0, int(visible.left()))
-                vr = min(self._atlas_size, int(visible.right()))
+                    left = max(0, int(visible.left()) // step_small * step_small)
+                    right = min(self._atlas_size, int(visible.right()) + step_small)
+                    top = max(0, int(visible.top()) // step_small * step_small)
+                    bottom = min(self._atlas_size, int(visible.bottom()) + step_small)
 
-                # 竖线
-                x = left
-                while x <= right:
-                    if x == 0 or x == self._atlas_size:
+                    vt = max(0, int(visible.top()))
+                    vb = min(self._atlas_size, int(visible.bottom()))
+                    vl = max(0, int(visible.left()))
+                    vr = min(self._atlas_size, int(visible.right()))
+
+                    # 竖线
+                    x = left
+                    while x <= right:
+                        if x == 0 or x == self._atlas_size:
+                            x += step_small
+                            continue
+                        if x % step_major == 0:
+                            painter.setPen(major_pen)
+                        elif x % step_mid == 0:
+                            painter.setPen(mid_pen)
+                        else:
+                            painter.setPen(minor_pen)
+                        painter.drawLine(x, vt, x, vb)
                         x += step_small
-                        continue
-                    if x % step_major == 0:
-                        painter.setPen(major_pen)
-                    elif x % step_mid == 0:
-                        painter.setPen(mid_pen)
-                    else:
-                        painter.setPen(minor_pen)
-                    painter.drawLine(x, vt, x, vb)
-                    x += step_small
 
-                # 横线
-                y = top
-                while y <= bottom:
-                    if y == 0 or y == self._atlas_size:
+                    # 横线
+                    y = top
+                    while y <= bottom:
+                        if y == 0 or y == self._atlas_size:
+                            y += step_small
+                            continue
+                        if y % step_major == 0:
+                            painter.setPen(major_pen)
+                        elif y % step_mid == 0:
+                            painter.setPen(mid_pen)
+                        else:
+                            painter.setPen(minor_pen)
+                        painter.drawLine(vl, y, vr, y)
                         y += step_small
-                        continue
-                    if y % step_major == 0:
-                        painter.setPen(major_pen)
-                    elif y % step_mid == 0:
-                        painter.setPen(mid_pen)
-                    else:
-                        painter.setPen(minor_pen)
-                    painter.drawLine(vl, y, vr, y)
-                    y += step_small
 
         # 合图范围边框 - 始终显示，更明显
         border_pen = QPen(QColor(COLOR_PRIMARY), 3.0, Qt.PenStyle.SolidLine)
@@ -147,6 +213,7 @@ class AtlasEditorView(QWidget):
         self._items: Dict[str, TextureGraphicsItem] = {}
         self._auto_layout_running = False
         self._show_grid = True
+        self._smooth_mode = False
 
         self._init_ui()
 
@@ -358,6 +425,49 @@ class AtlasEditorView(QWidget):
     def _on_grid_toggle(self, checked: bool):
         self._show_grid = checked
         self._scene.set_show_grid(checked)
+
+    def set_smooth_mode(self, enabled: bool):
+        """切换流畅模式：OpenGL 加速 + 局部重绘 + 场景缓存"""
+        self._smooth_mode = enabled
+        self._scene.set_smooth_mode(enabled)
+
+        if enabled:
+            # OpenGL 硬件加速渲染
+            try:
+                from PySide6.QtOpenGLWidgets import QOpenGLWidget
+                gl_widget = QOpenGLWidget()
+                self._view.setViewport(gl_widget)
+            except ImportError:
+                pass  # 没有 OpenGL 支持则跳过
+
+            # 局部重绘（最大的性能提升）
+            self._view.setViewportUpdateMode(
+                QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate
+            )
+            # 关闭抗锯齿的 SmoothPixmapTransform（GPU 渲染下不需要）
+            self._view.setRenderHints(QPainter.RenderHint.Antialiasing)
+            # 启用场景缓存模式
+            self._view.setCacheMode(
+                QGraphicsView.CacheModeFlag.CacheBackground
+            )
+        else:
+            # 恢复默认 viewport
+            self._view.setViewport(QWidget())
+            self._view.setViewportUpdateMode(
+                QGraphicsView.ViewportUpdateMode.FullViewportUpdate
+            )
+            self._view.setRenderHints(
+                QPainter.RenderHint.Antialiasing
+                | QPainter.RenderHint.SmoothPixmapTransform
+            )
+            self._view.setCacheMode(
+                QGraphicsView.CacheModeFlag(0)
+            )
+
+        # 重新绑定 viewport 事件（viewport 替换后旧绑定失效）
+        self._view.setAcceptDrops(True)
+        self._view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._view.setInteractive(True)
 
     def set_project(self, project: ProjectModel):
         self._project = project

@@ -16,6 +16,16 @@ from PySide6.QtGui import (
 from utils.constants import GRID_UNIT, COLOR_PRIMARY, COLOR_COLLISION
 
 
+# 模块级流畅模式标志（由 MainWindow 在切换时设置）
+_smooth_mode_enabled = False
+
+
+def set_smooth_mode(enabled: bool):
+    """全局切换流畅模式（由 MainWindow 调用）"""
+    global _smooth_mode_enabled
+    _smooth_mode_enabled = enabled
+
+
 class TextureGraphicsItem(QGraphicsObject):
     """编辑器中可拖拽的贴图图形项，支持 QPropertyAnimation"""
 
@@ -37,8 +47,11 @@ class TextureGraphicsItem(QGraphicsObject):
         self._pixel_h = grid_h * GRID_UNIT
 
         self._thumbnail = None
+        self._thumbnail_cache: QPixmap | None = None  # 预缩放缓存
+        self._thumbnail_cache_size: tuple = (0, 0)
         if thumbnail_path and os.path.exists(thumbnail_path):
             self._thumbnail = QPixmap(thumbnail_path)
+            self._build_thumbnail_cache()
 
         self._glow_opacity_val = 0.0
         self._is_colliding = False
@@ -54,11 +67,34 @@ class TextureGraphicsItem(QGraphicsObject):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setZValue(1)
 
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(8)
-        shadow.setColor(QColor(0, 0, 0, 100))
-        shadow.setOffset(0, 2)
-        self.setGraphicsEffect(shadow)
+        self._apply_shadow_effect()
+
+    def _apply_shadow_effect(self):
+        """根据流畅模式切换阴影实现"""
+        if _smooth_mode_enabled:
+            # 流畅模式：禁用 QGraphicsDropShadowEffect（CPU 密集）
+            self.setGraphicsEffect(None)
+        else:
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(8)
+            shadow.setColor(QColor(0, 0, 0, 100))
+            shadow.setOffset(0, 2)
+            self.setGraphicsEffect(shadow)
+
+    def _build_thumbnail_cache(self):
+        """预缩放缩略图到当前尺寸，避免 paint() 每帧 scaled"""
+        if self._thumbnail and not self._thumbnail.isNull():
+            w, h = self._pixel_w, self._pixel_h
+            if w > 0 and h > 0:
+                mode = (Qt.TransformationMode.FastTransformation
+                        if _smooth_mode_enabled
+                        else Qt.TransformationMode.SmoothTransformation)
+                self._thumbnail_cache = self._thumbnail.scaled(
+                    w, h,
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    mode,
+                )
+                self._thumbnail_cache_size = (w, h)
 
     def boundingRect(self) -> QRectF:
         margin = 4
@@ -73,13 +109,25 @@ class TextureGraphicsItem(QGraphicsObject):
 
         # 绘制贴图内容
         if self._thumbnail:
-            thumb_rect = rect
-            scaled = self._thumbnail.scaled(
-                int(thumb_rect.width()), int(thumb_rect.height()),
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+            # 优先使用预缓存的缩略图
+            cache_valid = (
+                self._thumbnail_cache is not None
+                and self._thumbnail_cache_size == (self._pixel_w, self._pixel_h)
             )
-            painter.drawPixmap(int(thumb_rect.x()), int(thumb_rect.y()), scaled)
+            if cache_valid:
+                painter.drawPixmap(0, 0, self._thumbnail_cache)
+            else:
+                # 缓存未命中时重建（尺寸变化后）
+                self._build_thumbnail_cache()
+                if self._thumbnail_cache:
+                    painter.drawPixmap(0, 0, self._thumbnail_cache)
+                else:
+                    scaled = self._thumbnail.scaled(
+                        int(rect.width()), int(rect.height()),
+                        Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    painter.drawPixmap(int(rect.x()), int(rect.y()), scaled)
         else:
             grad = QLinearGradient(0, 0, 0, self._pixel_h)
             grad.setColorAt(0, QColor(60, 80, 120, 200))
@@ -87,6 +135,14 @@ class TextureGraphicsItem(QGraphicsObject):
             painter.setBrush(QBrush(grad))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRect(rect)
+
+        # 流畅模式下手绘轻量阴影（替代 DropShadowEffect）
+        if _smooth_mode_enabled:
+            shadow_color = QColor(0, 0, 0, 60)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(shadow_color)
+            painter.drawRect(QRectF(2, self._pixel_h, self._pixel_w, 3))
+            painter.drawRect(QRectF(self._pixel_w, 2, 3, self._pixel_h))
 
         # 只画外部边框
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -174,6 +230,10 @@ class TextureGraphicsItem(QGraphicsObject):
         self._pixel_h = grid_h * GRID_UNIT
         if thumbnail_path and os.path.exists(thumbnail_path):
             self._thumbnail = QPixmap(thumbnail_path)
+        # 重建缩略图缓存
+        self._thumbnail_cache = None
+        self._thumbnail_cache_size = (0, 0)
+        self._build_thumbnail_cache()
         self.update()
 
     # ---- Mouse events ----
@@ -205,19 +265,21 @@ class TextureGraphicsItem(QGraphicsObject):
         super().mouseReleaseEvent(event)
 
     def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent):
-        effect = self.graphicsEffect()
-        if isinstance(effect, QGraphicsDropShadowEffect):
-            effect.setBlurRadius(16)
-            effect.setColor(QColor(0, 0, 0, 160))
-            effect.setOffset(0, 4)
+        if not _smooth_mode_enabled:
+            effect = self.graphicsEffect()
+            if isinstance(effect, QGraphicsDropShadowEffect):
+                effect.setBlurRadius(16)
+                effect.setColor(QColor(0, 0, 0, 160))
+                effect.setOffset(0, 4)
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent):
-        effect = self.graphicsEffect()
-        if isinstance(effect, QGraphicsDropShadowEffect):
-            effect.setBlurRadius(8)
-            effect.setColor(QColor(0, 0, 0, 100))
-            effect.setOffset(0, 2)
+        if not _smooth_mode_enabled:
+            effect = self.graphicsEffect()
+            if isinstance(effect, QGraphicsDropShadowEffect):
+                effect.setBlurRadius(8)
+                effect.setColor(QColor(0, 0, 0, 100))
+                effect.setOffset(0, 2)
         super().hoverLeaveEvent(event)
 
     def contextMenuEvent(self, event):

@@ -20,7 +20,7 @@ from utils.constants import (
     DEFAULT_SHORTCUTS, SHORTCUT_NAMES, PANEL_BORDER_RADIUS,
     DEFAULT_ATLAS_SIZE, DEFAULT_WIDTH_COMPRESS_MAP, DEFAULT_AUTO_COMPRESS,
     DEFAULT_EXCLUDE_SUFFIXES, DEFAULT_WIDTH_COLOR_MAP,
-    DEFAULT_THUMBNAIL_QUALITY,
+    DEFAULT_THUMBNAIL_QUALITY, DEFAULT_SMOOTH_MODE,
     DEFAULT_ATLAS_SUFFIX, DEFAULT_FUZZY_THRESHOLD, DEFAULT_MIN_TIER_SIZE,
     REVERSE_COLOR_PRIMARY, REVERSE_COLOR_PRIMARY_HOVER,
     REVERSE_COLOR_PRIMARY_PRESSED,
@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
             "exclude_suffixes": list(DEFAULT_EXCLUDE_SUFFIXES),
             "width_color_map": dict(DEFAULT_WIDTH_COLOR_MAP),
             "thumbnail_quality": DEFAULT_THUMBNAIL_QUALITY,
+            "smooth_mode": DEFAULT_SMOOTH_MODE,
             "atlas_suffix": DEFAULT_ATLAS_SUFFIX,
             "fuzzy_threshold": DEFAULT_FUZZY_THRESHOLD,
             "min_tier_size": DEFAULT_MIN_TIER_SIZE,
@@ -77,6 +78,10 @@ class MainWindow(QMainWindow):
         self._setup_global_hotkeys()
         self._update_title()
         self._init_undo_state()
+
+        # 应用流畅模式（根据恢复的设置）
+        if self._settings.get("smooth_mode", DEFAULT_SMOOTH_MODE):
+            self._apply_smooth_mode(True)
 
         # 用恢复的快捷键更新素材库按钮文字
         screenshot_key = self._settings.get("shortcuts", {}).get("screenshot", "Alt+D")
@@ -635,6 +640,7 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self._settings, self)
         if dlg.exec() == SettingsDialog.DialogCode.Accepted:
             old_quality = self._settings.get("thumbnail_quality", DEFAULT_THUMBNAIL_QUALITY)
+            old_smooth = self._settings.get("smooth_mode", DEFAULT_SMOOTH_MODE)
             new_settings = dlg.get_settings()
             self._settings = new_settings
             self._undo_manager.max_steps = new_settings.get("undo_steps", DEFAULT_UNDO_STEPS)
@@ -647,6 +653,11 @@ class MainWindow(QMainWindow):
             screenshot_key = new_settings.get("shortcuts", {}).get("screenshot", "Alt+D")
             self._library_panel.update_screenshot_shortcut_label(screenshot_key)
 
+            # 流畅模式切换
+            new_smooth = new_settings.get("smooth_mode", DEFAULT_SMOOTH_MODE)
+            if new_smooth != old_smooth:
+                self._apply_smooth_mode(new_smooth)
+
             # 如果缩略图清晰度变更，清除缓存并刷新
             new_quality = new_settings.get("thumbnail_quality", DEFAULT_THUMBNAIL_QUALITY)
             if new_quality != old_quality:
@@ -656,6 +667,24 @@ class MainWindow(QMainWindow):
                 for tex in self._project.library:
                     tex.thumbnail_path = None
                 self._library_panel.refresh()
+
+    def _apply_smooth_mode(self, enabled: bool):
+        """全局切换流畅模式：编辑器 + 动画引擎 + 贴图图形项"""
+        # 动画引擎
+        self._animation_engine.set_smooth_mode(enabled)
+
+        # 编辑器视图（OpenGL / ViewportUpdateMode / 网格缓存）
+        self._editor_view.set_smooth_mode(enabled)
+
+        # 贴图图形项全局标志
+        from views.texture_graphics_item import set_smooth_mode as set_item_smooth
+        set_item_smooth(enabled)
+
+        # 刷新已存在的图形项（重建缩略图缓存 + 阴影效果）
+        for item in self._editor_view._items.values():
+            item._apply_shadow_effect()
+            item._build_thumbnail_cache()
+            item.update()
 
     def _on_clear_screenshot_cache(self):
         """清理截图缓存"""
