@@ -745,6 +745,10 @@ class AtlasEditorView(QWidget):
         if not self._current_atlas:
             return
 
+        # 如果自动整理动画正在运行，拖拽操作会中断它，需要强制结束
+        if self._auto_layout_running:
+            self._anim.force_finish_auto_layout()
+
         pt = self._current_atlas.find_placed(texture_id)
         if not pt:
             return

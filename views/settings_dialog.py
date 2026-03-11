@@ -505,9 +505,10 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-11）\n"
-            "  · 修复：自动整理按钮偶现卡灰无法点击\n"
-            "  · 修复：检查更新 HTTP 403 错误（API 限流自动回退）\n"
-            "  · 改进：动画引擎健壮性增强"
+            "  · 修复：自动整理+拖拽冲突导致按钮永久锁灰\n"
+            "  · 重写：检查更新不再依赖 GitHub API（彻底解决 403 限流）\n"
+            "  · 新增：更新前自动保存项目，重启后自动恢复\n"
+            "  · 改进：流畅模式动画速度大幅加快"
         )
         changelog_text.setWordWrap(True)
         changelog_text.setStyleSheet(

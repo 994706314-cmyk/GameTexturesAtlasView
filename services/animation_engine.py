@@ -230,7 +230,11 @@ class AnimationEngine:
 
     def auto_layout_animate(self, moves: Dict[QGraphicsObject, QPointF],
                             on_finished: Optional[Callable] = None):
-        """自动整理批量动画"""
+        """自动整理批量动画
+
+        每个 item 的子动画同时注册到 item 级别的 _store，
+        这样拖拽时 elastic_snap 的 _stop_existing 能正确停止冲突动画。
+        """
         if not moves:
             if on_finished:
                 on_finished()
@@ -251,8 +255,15 @@ class AnimationEngine:
             anim.setEndValue(target_pos)
             anim.setEasingCurve(curve)
             group.addAnimation(anim)
+            # 注册到 item 级别，拖拽时 _stop_existing 能找到并停止
+            self._store(item, "pos", anim)
+
+        self._auto_layout_done_called = False
 
         def _on_done():
+            if self._auto_layout_done_called:
+                return
+            self._auto_layout_done_called = True
             for item in moves:
                 self._cleanup(item, "pos")
             if on_finished:
@@ -261,6 +272,23 @@ class AnimationEngine:
         group.finished.connect(_on_done)
         self._store_group("auto_layout", group)
         group.start()
+
+    def force_finish_auto_layout(self):
+        """强制结束自动整理动画并立即触发回调。
+
+        用于拖拽 item 等操作中断自动整理时安全恢复按钮状态。
+        """
+        if "__global__" not in self._animations:
+            return
+        group = self._animations["__global__"].get("auto_layout")
+        if group and group.state() == QAbstractAnimation.State.Running:
+            group.stop()
+            # stop() 不触发 finished，手动触发
+            try:
+                group.finished.emit()
+            except RuntimeError:
+                pass
+            self._animations["__global__"].pop("auto_layout", None)
 
     def fade_remove(self, item: QGraphicsObject, on_finished: Optional[Callable] = None):
         """删除淡出：opacity 1→0 + scale 1→0.3"""
@@ -372,18 +400,13 @@ class AnimationEngine:
             del self._animations[key]
 
     def _store_group(self, name: str, anim: QAbstractAnimation):
-        """存储非 item 关联的全局动画组
-
-        注意: 保留旧动画对象的引用直到新动画结束,
-        防止旧动画被 GC 回收后 finished 信号丢失。
-        """
+        """存储非 item 关联的全局动画组"""
         if "__global__" not in self._animations:
             self._animations["__global__"] = {}
         old = self._animations["__global__"].get(name)
         if old and old.state() == QAbstractAnimation.State.Running:
             old.stop()
-            # stop() 不触发 finished 信号, 需要手动触发回调
-            # 手动 emit finished 让上层回调得以执行
+            # stop() 不触发 finished 信号, 手动 emit 让回调执行
             try:
                 old.finished.emit()
             except RuntimeError:

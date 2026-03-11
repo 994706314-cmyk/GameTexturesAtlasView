@@ -94,9 +94,16 @@ class MainWindow(QMainWindow):
         from services.update_service import cleanup_old_exe
         cleanup_old_exe()
 
-        # 延迟 3 秒后静默检查更新（不打扰用户启动流程）
+        # 检查是否是更新后重启，恢复更新前的项目
+        from services.update_service import load_and_clear_update_state
+        restored_path = load_and_clear_update_state()
+        if restored_path and os.path.isfile(restored_path):
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, lambda: self._restore_after_update(restored_path))
+
+        # 延迟 5 秒后静默检查更新（不打扰用户启动流程）
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(3000, self._auto_check_update)
+        QTimer.singleShot(5000, self._auto_check_update)
 
     def _init_menu_bar(self):
         menu_bar = self.menuBar()
@@ -604,6 +611,16 @@ class MainWindow(QMainWindow):
         self._redo_action.setEnabled(self._undo_manager.can_redo())
 
     # ---- Auto Update (自动检查更新) ----
+    def _restore_after_update(self, project_path: str):
+        """更新后重启时自动恢复更新前的项目"""
+        try:
+            self._load_project(project_path)
+            self.statusBar().showMessage(
+                f"✅ 更新完成！已自动恢复项目: {os.path.basename(project_path)}", 8000
+            )
+        except Exception as e:
+            self.statusBar().showMessage(f"项目恢复失败: {e}", 5000)
+
     def _auto_check_update(self):
         """启动时静默检查更新（后台线程，不弹任何提示除非有新版本）"""
         from services.update_service import UpdateChecker
