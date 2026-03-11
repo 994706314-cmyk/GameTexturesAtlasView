@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec.bak
+
+# PyInstaller
+*.manifest
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Screenshots (user generated)
+ScreenShot/
+
+# Old versions (旧版工具)
+AltasToolV1/
+
+# CodeBuddy
+.codebuddy/
