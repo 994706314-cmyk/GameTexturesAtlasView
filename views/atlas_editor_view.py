@@ -927,6 +927,11 @@ class AtlasEditorView(QWidget):
             self.after_change.emit("自动填充")
             self._update_info()
 
+        # 如果没有需要移动的 item，直接完成
+        if not moves:
+            _on_done()
+            return
+
         self._anim.auto_layout_animate(moves, on_finished=_on_done)
 
     def _on_clear(self):

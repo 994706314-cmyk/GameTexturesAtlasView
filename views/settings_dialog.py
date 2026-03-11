@@ -505,10 +505,9 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-11）\n"
-            "  · 修复：网格缩放自适应，缩放后网格不再错乱模糊\n"
-            "  · 修复：检查更新 SSL 证书兼容性增强（自动降级重试）\n"
-            "  · 改进：网格根据缩放级别自动显示/隐藏层级\n"
-            "  · 改进：更新日志精简，仅显示当前版本信息"
+            "  · 修复：自动整理按钮偶现卡灰无法点击\n"
+            "  · 修复：检查更新 HTTP 403 错误（API 限流自动回退）\n"
+            "  · 改进：动画引擎健壮性增强"
         )
         changelog_text.setWordWrap(True)
         changelog_text.setStyleSheet(

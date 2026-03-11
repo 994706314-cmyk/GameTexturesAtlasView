@@ -372,10 +372,20 @@ class AnimationEngine:
             del self._animations[key]
 
     def _store_group(self, name: str, anim: QAbstractAnimation):
-        """存储非 item 关联的全局动画组"""
+        """存储非 item 关联的全局动画组
+
+        注意: 保留旧动画对象的引用直到新动画结束,
+        防止旧动画被 GC 回收后 finished 信号丢失。
+        """
         if "__global__" not in self._animations:
             self._animations["__global__"] = {}
         old = self._animations["__global__"].get(name)
         if old and old.state() == QAbstractAnimation.State.Running:
             old.stop()
+            # stop() 不触发 finished 信号, 需要手动触发回调
+            # 手动 emit finished 让上层回调得以执行
+            try:
+                old.finished.emit()
+            except RuntimeError:
+                pass  # 对象可能已被销毁
         self._animations["__global__"][name] = anim

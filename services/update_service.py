@@ -76,12 +76,18 @@ def _create_ssl_contexts():
 
 
 def _urlopen_with_retry(req, timeout=15):
-    """依次尝试多个 SSL 上下文发起请求，解决部分环境证书校验失败的问题"""
+    """依次尝试多个 SSL 上下文发起请求，解决部分环境证书校验失败的问题
+
+    注意: HTTPError（含 403/404 等）会被直接抛出，不做 SSL 重试，
+    因为 HTTP 状态码错误与 SSL 无关。
+    """
     contexts = _create_ssl_contexts()
     last_error = None
     for ctx in contexts:
         try:
             return urlopen(req, context=ctx, timeout=timeout)
+        except HTTPError:
+            raise  # HTTP 状态码错误直接抛出，不需要换 SSL 重试
         except (URLError, ssl.SSLError) as e:
             last_error = e
             continue
@@ -175,8 +181,9 @@ class UpdateChecker(QObject):
                 download_url=download_url,
             ), None
         except HTTPError as e:
-            if e.code == 404:
-                return None, None  # 没有 release，回退到 tags
+            if e.code in (404, 403):
+                # 404: 没有 release; 403: API 限流 → 回退到 tags
+                return None, None
             return None, f"HTTP 错误: {e.code}"
         except URLError as e:
             reason = str(e.reason) if hasattr(e, 'reason') else str(e)
@@ -226,6 +233,10 @@ class UpdateChecker(QObject):
                 release_notes=f"发现新 Tag {best_tag}，请前往 GitHub 查看详情。\n{release_page}" if has_update else "",
                 download_url="",
             ), None
+        except HTTPError as e:
+            if e.code == 403:
+                return None, "GitHub API 请求频率超限，请稍后再试"
+            return None, f"HTTP 错误: {e.code}"
         except Exception as e:
             return None, str(e)
 
