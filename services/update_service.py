@@ -57,16 +57,19 @@ def _get_exe_path() -> Optional[str]:
 
 
 def _create_ssl_context():
-    """创建 SSL 上下文（兼容某些缺少证书的环境）"""
-    ctx = ssl.create_default_context()
-    # 如果默认证书不可用，降级为不验证（仅用于 GitHub API）
+    """创建 SSL 上下文（兼容各种网络环境）"""
+    # 先尝试默认证书链
     try:
-        urlopen(Request("https://api.github.com", method="HEAD"), context=ctx, timeout=5)
-    except ssl.SSLError:
-        ctx = ssl._create_unverified_context()
+        ctx = ssl.create_default_context()
+        return ctx
     except Exception:
         pass
-    return ctx
+    # 降级为不验证（仅用于 GitHub API，安全风险可控）
+    try:
+        ctx = ssl._create_unverified_context()
+        return ctx
+    except Exception:
+        return None
 
 
 class UpdateCheckResult:
@@ -97,17 +100,13 @@ class UpdateChecker(QObject):
         ctx = _create_ssl_context()
 
         # ---- 第一步：尝试 releases/latest ----
-        release_result = self._check_release(ctx)
-        if release_result is not None:
-            # Release 存在且有更新，直接返回
-            if release_result.has_update:
-                self.check_finished.emit(release_result)
-                return
-            # Release 存在但无更新 → 继续用 Tags 二次确认
-            # （可能 tag 比 release 更新，但还没发 release）
+        release_result, release_error = self._check_release(ctx)
+        if release_result is not None and release_result.has_update:
+            self.check_finished.emit(release_result)
+            return
 
         # ---- 第二步：Tags 回退 ----
-        tag_result = self._check_tags(ctx)
+        tag_result, tag_error = self._check_tags(ctx)
         if tag_result is not None and tag_result.has_update:
             self.check_finished.emit(tag_result)
             return
@@ -117,12 +116,16 @@ class UpdateChecker(QObject):
             self.check_finished.emit(release_result)
         elif tag_result is not None:
             self.check_finished.emit(tag_result)
+        elif release_error:
+            self.check_finished.emit(UpdateCheckResult(error=release_error))
+        elif tag_error:
+            self.check_finished.emit(UpdateCheckResult(error=tag_error))
         else:
             self.check_finished.emit(UpdateCheckResult(error="尚无发布版本"))
 
     # ------------------------------------------------------------------
-    def _check_release(self, ctx) -> Optional[UpdateCheckResult]:
-        """通过 releases/latest 检查"""
+    def _check_release(self, ctx):
+        """通过 releases/latest 检查。返回 (result_or_None, error_str_or_None)"""
         try:
             url = GITHUB_API_LATEST.format(owner=self._owner, repo=self._repo)
             req = Request(url)
@@ -155,22 +158,20 @@ class UpdateChecker(QObject):
                 latest_version=tag.lstrip("vV"),
                 release_notes=body,
                 download_url=download_url,
-            )
+            ), None
         except HTTPError as e:
             if e.code == 404:
-                return None  # 没有 release，回退到 tags
-            self.check_finished.emit(UpdateCheckResult(error=f"HTTP 错误: {e.code}"))
-            return None
+                return None, None  # 没有 release，回退到 tags
+            return None, f"HTTP 错误: {e.code}"
         except URLError as e:
-            self.check_finished.emit(UpdateCheckResult(error=f"网络错误: {e.reason}"))
-            return None
+            reason = str(e.reason) if hasattr(e, 'reason') else str(e)
+            return None, f"网络连接失败，请检查网络设置（{reason}）"
         except Exception as e:
-            self.check_finished.emit(UpdateCheckResult(error=str(e)))
-            return None
+            return None, str(e)
 
     # ------------------------------------------------------------------
-    def _check_tags(self, ctx) -> Optional[UpdateCheckResult]:
-        """通过 tags 列表检查（回退方案）"""
+    def _check_tags(self, ctx):
+        """通过 tags 列表检查（回退方案）。返回 (result_or_None, error_str_or_None)"""
         try:
             url = GITHUB_API_TAGS.format(owner=self._owner, repo=self._repo)
             req = Request(url)
@@ -181,7 +182,7 @@ class UpdateChecker(QObject):
                 tags_data = json.loads(resp.read().decode("utf-8"))
 
             if not tags_data:
-                return None
+                return None, None
 
             # 找到最高版本的 tag
             best_tag = ""
@@ -209,9 +210,9 @@ class UpdateChecker(QObject):
                 latest_version=best_tag.lstrip("vV"),
                 release_notes=f"发现新 Tag {best_tag}，请前往 GitHub 查看详情。\n{release_page}" if has_update else "",
                 download_url="",
-            )
-        except Exception:
-            return None
+            ), None
+        except Exception as e:
+            return None, str(e)
 
 
 class UpdateDownloader(QObject):

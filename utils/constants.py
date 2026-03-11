@@ -216,7 +216,7 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.6.0"  # 新增流畅模式（OpenGL加速+Apple缓动+60~120fps动效）
+APP_VERSION = "1.6.1"  # 修复流畅模式网格显示 + 标题栏版本号 + 更新检查网络兼容性
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"

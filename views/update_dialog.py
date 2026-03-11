@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QTextEdit, QWidget,
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QFont
 
 from services.update_service import (
@@ -23,6 +23,8 @@ class UpdateDialog(QDialog):
         self._result = check_result
         self._downloader = None
         self._download_thread = None
+        self._countdown = 5  # 自动重启倒计时秒数
+        self._countdown_timer = None
 
         self.setWindowTitle("发现新版本")
         self.setFixedSize(520, 420)
@@ -156,6 +158,7 @@ class UpdateDialog(QDialog):
         if self._downloader:
             self._downloader.cancel()
         self._cleanup_download()
+        self._stop_countdown()
         self.reject()
 
     def _on_download_progress(self, downloaded: int, total: int):
@@ -181,15 +184,16 @@ class UpdateDialog(QDialog):
         success, message = apply_update(temp_path)
         if success:
             self._progress_label.setText("✅ " + message)
-            self._later_btn.setText("稍后重启")
-            self._later_btn.clicked.disconnect()
-            self._later_btn.clicked.connect(self.accept)
-
             self._update_btn.setVisible(False)
+
+            # 左侧按钮改为"取消重启"
+            self._later_btn.setText("取消重启")
+            self._later_btn.clicked.disconnect()
+            self._later_btn.clicked.connect(self._cancel_and_close)
 
             # 新增"立即重启"按钮
             self._restart_btn = QPushButton("立即重启")
-            self._restart_btn.setFixedWidth(100)
+            self._restart_btn.setFixedWidth(120)
             self._restart_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: #4CAF50; color: #FFFFFF;
@@ -199,10 +203,17 @@ class UpdateDialog(QDialog):
                 QPushButton:hover {{ background-color: #45A049; }}
             """)
             self._restart_btn.clicked.connect(self._on_restart)
-            # 找到按钮布局并添加
             btn_layout = self._later_btn.parent().layout()
             if btn_layout:
                 btn_layout.addWidget(self._restart_btn)
+
+            # 启动自动重启倒计时
+            self._countdown = 5
+            self._update_restart_btn_text()
+            self._countdown_timer = QTimer(self)
+            self._countdown_timer.setInterval(1000)
+            self._countdown_timer.timeout.connect(self._on_countdown_tick)
+            self._countdown_timer.start()
 
             self.update_applied.emit()
         else:
@@ -210,6 +221,31 @@ class UpdateDialog(QDialog):
             self._later_btn.setText("关闭")
             self._later_btn.clicked.disconnect()
             self._later_btn.clicked.connect(self.reject)
+
+    def _update_restart_btn_text(self):
+        """更新重启按钮的倒计时文字"""
+        if hasattr(self, '_restart_btn'):
+            self._restart_btn.setText(f"立即重启 ({self._countdown}s)")
+
+    def _on_countdown_tick(self):
+        """倒计时每秒回调"""
+        self._countdown -= 1
+        if self._countdown <= 0:
+            self._stop_countdown()
+            self._on_restart()
+        else:
+            self._update_restart_btn_text()
+
+    def _stop_countdown(self):
+        """停止倒计时"""
+        if self._countdown_timer:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
+
+    def _cancel_and_close(self):
+        """取消自动重启并关闭"""
+        self._stop_countdown()
+        self.accept()
 
     def _on_download_error(self, error_msg: str):
         """下载出错"""
@@ -223,6 +259,7 @@ class UpdateDialog(QDialog):
 
     def _on_restart(self):
         """立即重启应用"""
+        self._stop_countdown()
         import subprocess
         import sys
 
@@ -246,5 +283,6 @@ class UpdateDialog(QDialog):
             self._downloader = None
 
     def closeEvent(self, event):
+        self._stop_countdown()
         self._cleanup_download()
         super().closeEvent(event)

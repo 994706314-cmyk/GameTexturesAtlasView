@@ -730,7 +730,7 @@ class MainWindow(QMainWindow):
         if self._current_file_path:
             name = os.path.basename(self._current_file_path)
         dirty = " *" if self._project.dirty else ""
-        self.setWindowTitle(f"TexturesAtlasView - {name}{dirty}")
+        self.setWindowTitle(f"TexturesAtlasView V{APP_VERSION} - {name}{dirty}")
 
     def _update_stats(self):
         self._toolbar.update_stats(

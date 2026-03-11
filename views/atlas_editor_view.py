@@ -73,12 +73,13 @@ class AtlasGraphicsScene(QGraphicsScene):
         step_mid = 64
         step_major = 256
 
-        minor_pen = QPen(QColor(70, 70, 70, 180))
+        # 降低整体透明度，让网格不那么扎眼
+        minor_pen = QPen(QColor(55, 55, 55, 90))
         minor_pen.setWidthF(0)
-        mid_pen = QPen(QColor(100, 100, 100, 220))
+        mid_pen = QPen(QColor(75, 75, 75, 130))
         mid_pen.setWidthF(0)
-        major_pen = QPen(QColor(140, 140, 140, 255))
-        major_pen.setWidthF(1.5)
+        major_pen = QPen(QColor(100, 100, 100, 180))
+        major_pen.setWidthF(1.0)
 
         # 竖线
         x = step_small
@@ -122,7 +123,7 @@ class AtlasGraphicsScene(QGraphicsScene):
         if self._show_grid and self._smooth_mode:
             # 流畅模式：使用预渲染的 pixmap 缓存
             self._ensure_grid_cache()
-            painter.drawPixmap(0, 0, self._grid_cache)
+            painter.drawPixmap(atlas_rect.toRect(), self._grid_cache)
         else:
             # 合图区域背景
             painter.fillRect(atlas_rect, QBrush(QColor(30, 30, 30)))

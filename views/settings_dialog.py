@@ -504,6 +504,12 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(changelog_title)
 
         changelog_text = QLabel(
+            "V1.6.1（2026-03-11）\n"
+            "  · 修复：流畅模式网格显示异常（线条过粗过亮）\n"
+            "  · 降低网格整体透明度，视觉更柔和\n"
+            "  · 窗口标题栏显示版本号（TexturesAtlasView V1.6.1）\n"
+            "  · 修复：检查更新网络错误（SSL 证书兼容性提升）\n"
+            "  · 改进：更新下载完成后 5 秒自动重启\n\n"
             "V1.6.0（2026-03-11）\n"
             "  · 新增：设置→通用→流畅模式（默认关闭）\n"
             "  · 开启后启用 OpenGL 硬件加速渲染\n"
