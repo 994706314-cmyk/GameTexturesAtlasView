@@ -482,6 +482,9 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(changelog_title)
 
         changelog_text = QLabel(
+            "V1.5.1（2026-03-11）\n"
+            "  · 修复：存档文件分享后缩略图丢失（缩略图嵌入存档）\n"
+            "  · 修复：检查模式组内区域可展开/收起，不再截断\n\n"
             "V1.5（2026-03-11）\n"
             "  · 新增自动更新功能：启动静默检查 + 设置→关于页手动检查\n"
             "  · 发现新版本后自动下载 EXE 并替换，支持一键重启\n"

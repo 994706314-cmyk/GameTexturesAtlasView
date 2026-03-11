@@ -423,11 +423,21 @@ class ReverseImportPanel(QWidget):
             atlas_id, region_id = self._resolve_group_target(group, self._region_map)
             self._group_targets[group.group_id] = (atlas_id, region_id)
 
-            row_count = min(len(group.region_ids), 4)
-            height = 36 + row_count * 56 + (8 if len(group.region_ids) > 4 else 0) + 8
+            # 折叠状态高度：头部 36 + 可见行数 * 56 + 展开按钮 24(如有) + 底部边距 8
+            visible_count = min(len(group.region_ids), _ResultGroupWidget._MAX_COLLAPSED)
+            has_overflow = len(group.region_ids) > _ResultGroupWidget._MAX_COLLAPSED
+            height = 36 + visible_count * 56 + (24 if has_overflow else 0) + 8
             item.setSizeHint(QSize(0, height))
             self._result_list.addItem(item)
             self._result_list.setItemWidget(item, widget)
+
+            # 连接高度变化信号，展开/收起时动态调整 item 高度
+            _item_ref = item
+            _group_ref = group
+            widget.height_changed.connect(
+                lambda it=_item_ref, gp=_group_ref, w=widget:
+                    self._update_item_height(it, gp, w)
+            )
 
             # 记录 group_id -> row 映射
             self._group_id_to_row[group.group_id] = self._result_list.count() - 1
@@ -492,6 +502,22 @@ class ReverseImportPanel(QWidget):
         """箭头按钮点击：跳转到指定图集并定位区域"""
         self.group_selected.emit(group_id, atlas_id, region_id)
 
+    def _update_item_height(self, item: QListWidgetItem, group: DuplicateGroup,
+                            widget: '_ResultGroupWidget'):
+        """展开/收起时动态更新 QListWidgetItem 的高度"""
+        total_regions = len(group.region_ids)
+        max_collapsed = _ResultGroupWidget._MAX_COLLAPSED
+        has_overflow = total_regions > max_collapsed
+
+        if widget._expanded:
+            # 展开状态：显示所有区域行 + 收起按钮
+            visible_count = total_regions
+        else:
+            # 折叠状态：最多显示 max_collapsed 个
+            visible_count = min(total_regions, max_collapsed)
+
+        height = 36 + visible_count * 56 + (24 if has_overflow else 0) + 8
+        item.setSizeHint(QSize(0, height))
 
     # ---- 样式 ----
     @staticmethod
@@ -514,10 +540,14 @@ class ReverseImportPanel(QWidget):
 
 
 class _ResultGroupWidget(QWidget):
-    """结果分组卡片 - 展示重复区域缩略图与图集信息，支持箭头跳转"""
+    """结果分组卡片 - 展示重复区域缩略图与图集信息，支持箭头跳转和展开/收起"""
 
     # 信号：点击某个区域行的箭头时发出 (group_id, atlas_id, region_id)
     region_jump = Signal(int, str, str)
+    # 信号：卡片高度发生变化，需要外部更新 QListWidgetItem 的 sizeHint
+    height_changed = Signal()
+
+    _MAX_COLLAPSED = 4  # 折叠状态下最多展示的区域数
 
     def __init__(
         self,
@@ -530,6 +560,8 @@ class _ResultGroupWidget(QWidget):
         self._group = group
         self._atlas_map = atlas_map
         self._region_map = region_map
+        self._expanded = False
+        self._extra_rows: List[QWidget] = []  # 折叠区域的行控件
         self._init_ui()
 
     def _init_ui(self):
@@ -591,27 +623,60 @@ class _ResultGroupWidget(QWidget):
         layout.addLayout(header_layout)
 
         # ===== 区域缩略图列表 =====
-        max_show = 4  # 最多展示4个区域
-        shown = 0
+        # 收集所有有效的区域行数据
+        valid_regions = []
         for region_id in self._group.region_ids:
-            if shown >= max_show:
-                break
-            if region_id not in self._region_map:
-                continue
+            if region_id in self._region_map:
+                region, atlas = self._region_map[region_id]
+                valid_regions.append((region, atlas, region_id))
 
-            region, atlas = self._region_map[region_id]
+        # 先显示折叠状态下的行（最多 _MAX_COLLAPSED 个）
+        for i, (region, atlas, region_id) in enumerate(valid_regions):
             row_widget = self._create_region_row(region, atlas, region_id)
             layout.addWidget(row_widget)
-            shown += 1
+            if i >= self._MAX_COLLAPSED:
+                # 超出折叠限制的行，先隐藏
+                row_widget.setVisible(False)
+                self._extra_rows.append(row_widget)
 
-        remaining = len(self._group.region_ids) - shown
+        # 展开/收起按钮（仅在有溢出时显示）
+        remaining = len(valid_regions) - self._MAX_COLLAPSED
         if remaining > 0:
-            more_label = QLabel(f"  ... 还有 {remaining} 个区域")
-            more_label.setStyleSheet(f"""
-                font-size: 10px; color: {REVERSE_COLOR_TEXT_DISABLED};
-                background: transparent; padding: 0 0 0 4px;
+            self._toggle_btn = QPushButton(f"  ▼ 展开剩余 {remaining} 个区域")
+            self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._toggle_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 10px; color: {REVERSE_COLOR_PRIMARY};
+                    background: transparent; border: none;
+                    padding: 2px 4px; text-align: left;
+                }}
+                QPushButton:hover {{
+                    color: #C08810;
+                    text-decoration: underline;
+                }}
             """)
-            layout.addWidget(more_label)
+            self._toggle_btn.clicked.connect(self._toggle_expand)
+            self._remaining_count = remaining
+            layout.addWidget(self._toggle_btn)
+        else:
+            self._toggle_btn = None
+
+    def _toggle_expand(self):
+        """切换展开/收起状态"""
+        self._expanded = not self._expanded
+        for row in self._extra_rows:
+            row.setVisible(self._expanded)
+
+        if self._toggle_btn:
+            if self._expanded:
+                self._toggle_btn.setText("  ▲ 收起")
+            else:
+                self._toggle_btn.setText(
+                    f"  ▼ 展开剩余 {self._remaining_count} 个区域"
+                )
+
+        # 通知外部更新卡片高度
+        self.height_changed.emit()
 
     def _create_region_row(self, region: SubRegion, atlas: ReverseAtlasItem,
                            region_id: str) -> QWidget:

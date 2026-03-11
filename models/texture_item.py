@@ -1,6 +1,10 @@
 """贴图素材数据模型"""
 
+import os
 import uuid
+import base64
+import hashlib
+import tempfile
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
@@ -49,16 +53,52 @@ class TextureItem:
         }
         if self.is_screenshot:
             d["is_screenshot"] = True
+
+        # 将缩略图以 base64 嵌入存档，解决分享后缩略图丢失问题
+        if self.thumbnail_path and os.path.exists(self.thumbnail_path):
+            try:
+                with open(self.thumbnail_path, "rb") as f:
+                    d["thumbnail_data"] = base64.b64encode(f.read()).decode("ascii")
+            except Exception:
+                pass  # 读取失败则不嵌入，降级为路径引用
+
         return d
 
     @classmethod
+    def _get_cache_dir(cls) -> str:
+        """获取缩略图缓存目录"""
+        cache_dir = os.path.join(tempfile.gettempdir(), "tatlas_thumbnails")
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    @classmethod
     def from_dict(cls, data: dict) -> "TextureItem":
+        thumbnail_path = data.get("thumbnail_path")
+        thumbnail_data = data.get("thumbnail_data")
+
+        # 如果存档中有嵌入的缩略图数据，且本地缓存不存在，则还原到缓存
+        if thumbnail_data:
+            if not thumbnail_path or not os.path.exists(thumbnail_path):
+                try:
+                    raw = base64.b64decode(thumbnail_data)
+                    # 用内容哈希作为文件名，避免冲突
+                    content_hash = hashlib.md5(raw).hexdigest()
+                    restored_path = os.path.join(
+                        cls._get_cache_dir(), f"{content_hash}_restored.png"
+                    )
+                    if not os.path.exists(restored_path):
+                        with open(restored_path, "wb") as f:
+                            f.write(raw)
+                    thumbnail_path = restored_path
+                except Exception:
+                    pass  # 还原失败则 thumbnail_path 保持原样
+
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             original_path=data.get("original_path", ""),
             original_size=tuple(data.get("original_size", [64, 64])),
             display_size=tuple(data.get("display_size", [64, 64])),
             name=data.get("name", "未命名"),
-            thumbnail_path=data.get("thumbnail_path"),
+            thumbnail_path=thumbnail_path,
             is_screenshot=data.get("is_screenshot", False),
         )
