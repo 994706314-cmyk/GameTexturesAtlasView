@@ -56,20 +56,36 @@ def _get_exe_path() -> Optional[str]:
     return None
 
 
-def _create_ssl_context():
-    """创建 SSL 上下文（兼容各种网络环境）"""
-    # 先尝试默认证书链
+def _create_ssl_contexts():
+    """创建 SSL 上下文列表（先验证，后不验证），用于请求时按序尝试"""
+    contexts = []
+    # 1) 默认证书验证
     try:
-        ctx = ssl.create_default_context()
-        return ctx
+        contexts.append(ssl.create_default_context())
     except Exception:
         pass
-    # 降级为不验证（仅用于 GitHub API，安全风险可控）
+    # 2) 降级为不验证（仅用于 GitHub API，安全风险可控）
     try:
-        ctx = ssl._create_unverified_context()
-        return ctx
+        contexts.append(ssl._create_unverified_context())
     except Exception:
-        return None
+        pass
+    # 3) 兜底 None
+    if not contexts:
+        contexts.append(None)
+    return contexts
+
+
+def _urlopen_with_retry(req, timeout=15):
+    """依次尝试多个 SSL 上下文发起请求，解决部分环境证书校验失败的问题"""
+    contexts = _create_ssl_contexts()
+    last_error = None
+    for ctx in contexts:
+        try:
+            return urlopen(req, context=ctx, timeout=timeout)
+        except (URLError, ssl.SSLError) as e:
+            last_error = e
+            continue
+    raise last_error
 
 
 class UpdateCheckResult:
@@ -97,16 +113,15 @@ class UpdateChecker(QObject):
 
     def run(self):
         """在后台线程执行检查（优先 Release，回退 Tags）"""
-        ctx = _create_ssl_context()
 
         # ---- 第一步：尝试 releases/latest ----
-        release_result, release_error = self._check_release(ctx)
+        release_result, release_error = self._check_release()
         if release_result is not None and release_result.has_update:
             self.check_finished.emit(release_result)
             return
 
         # ---- 第二步：Tags 回退 ----
-        tag_result, tag_error = self._check_tags(ctx)
+        tag_result, tag_error = self._check_tags()
         if tag_result is not None and tag_result.has_update:
             self.check_finished.emit(tag_result)
             return
@@ -124,7 +139,7 @@ class UpdateChecker(QObject):
             self.check_finished.emit(UpdateCheckResult(error="尚无发布版本"))
 
     # ------------------------------------------------------------------
-    def _check_release(self, ctx):
+    def _check_release(self):
         """通过 releases/latest 检查。返回 (result_or_None, error_str_or_None)"""
         try:
             url = GITHUB_API_LATEST.format(owner=self._owner, repo=self._repo)
@@ -132,7 +147,7 @@ class UpdateChecker(QObject):
             req.add_header("Accept", "application/vnd.github.v3+json")
             req.add_header("User-Agent", "TexturesAtlasView-Updater")
 
-            with urlopen(req, context=ctx, timeout=15) as resp:
+            with _urlopen_with_retry(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             tag = data.get("tag_name", "")
@@ -170,7 +185,7 @@ class UpdateChecker(QObject):
             return None, str(e)
 
     # ------------------------------------------------------------------
-    def _check_tags(self, ctx):
+    def _check_tags(self):
         """通过 tags 列表检查（回退方案）。返回 (result_or_None, error_str_or_None)"""
         try:
             url = GITHUB_API_TAGS.format(owner=self._owner, repo=self._repo)
@@ -178,7 +193,7 @@ class UpdateChecker(QObject):
             req.add_header("Accept", "application/vnd.github.v3+json")
             req.add_header("User-Agent", "TexturesAtlasView-Updater")
 
-            with urlopen(req, context=ctx, timeout=15) as resp:
+            with _urlopen_with_retry(req, timeout=15) as resp:
                 tags_data = json.loads(resp.read().decode("utf-8"))
 
             if not tags_data:
@@ -236,8 +251,7 @@ class UpdateDownloader(QObject):
             req = Request(self._download_url)
             req.add_header("User-Agent", "TexturesAtlasView-Updater")
 
-            ctx = _create_ssl_context()
-            with urlopen(req, context=ctx, timeout=60) as resp:
+            with _urlopen_with_retry(req, timeout=60) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 self.progress.emit(0, total)
 

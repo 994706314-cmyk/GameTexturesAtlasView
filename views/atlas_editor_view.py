@@ -12,7 +12,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QPen, QColor, QWheelEvent, QDragEnterEvent, QDropEvent,
-    QMouseEvent, QBrush, QKeyEvent, QPixmap,
+    QMouseEvent, QBrush, QKeyEvent,
 )
 
 from models.atlas_model import AtlasModel
@@ -35,8 +35,6 @@ class AtlasGraphicsScene(QGraphicsScene):
         super().__init__(parent)
         self._atlas_size = atlas_size
         self._show_grid = True
-        self._grid_cache: QPixmap | None = None  # 网格 pixmap 缓存
-        self._grid_cache_size: int = 0
         self._smooth_mode = False
         margin = 200
         self.setSceneRect(-margin, -margin, atlas_size + margin * 2, atlas_size + margin * 2)
@@ -44,12 +42,10 @@ class AtlasGraphicsScene(QGraphicsScene):
     def set_smooth_mode(self, enabled: bool):
         """切换流畅模式"""
         self._smooth_mode = enabled
-        self._grid_cache = None  # 失效缓存
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
 
     def set_atlas_size(self, size: int):
         self._atlas_size = size
-        self._grid_cache = None  # 失效缓存
         margin = 200
         self.setSceneRect(-margin, -margin, size + margin * 2, size + margin * 2)
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
@@ -58,56 +54,109 @@ class AtlasGraphicsScene(QGraphicsScene):
         self._show_grid = show
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
 
-    def _ensure_grid_cache(self):
-        """构建/重建网格 pixmap 缓存（仅在流畅模式启用时使用）"""
-        if self._grid_cache and self._grid_cache_size == self._atlas_size:
+    def _get_view_scale(self) -> float:
+        """获取当前视图缩放比例"""
+        views = self.views()
+        if views:
+            return views[0].transform().m11()
+        return 1.0
+
+    def _draw_grid(self, painter: QPainter, rect: QRectF):
+        """根据缩放级别自适应绘制网格（统一逻辑，流畅/标准模式共用）"""
+        atlas_rect = QRectF(0, 0, self._atlas_size, self._atlas_size)
+        visible = rect.intersected(atlas_rect)
+        if visible.isEmpty():
             return
-        size = self._atlas_size
-        pm = QPixmap(size, size)
-        pm.fill(QColor(30, 30, 30))
 
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        scale = self._get_view_scale()
 
-        step_small = GRID_UNIT
+        # 根据缩放级别决定显示哪些网格层级
+        # 缩放很小时只显示大网格，缩放大时显示细网格
+        step_small = GRID_UNIT   # 16px
         step_mid = 64
         step_major = 256
 
-        # 降低整体透明度，让网格不那么扎眼
-        minor_pen = QPen(QColor(55, 55, 55, 90))
-        minor_pen.setWidthF(0)
-        mid_pen = QPen(QColor(75, 75, 75, 130))
-        mid_pen.setWidthF(0)
-        major_pen = QPen(QColor(100, 100, 100, 180))
-        major_pen.setWidthF(1.0)
+        # 计算屏幕上的像素间距
+        screen_px_small = step_small * scale
+        screen_px_mid = step_mid * scale
+        screen_px_major = step_major * scale
+
+        # 只在屏幕像素间距 >= 3px 时才绘制该层级
+        show_minor = screen_px_small >= 4
+        show_mid = screen_px_mid >= 4
+        show_major = screen_px_major >= 4
+
+        if not show_major:
+            return  # 缩放太小，什么都不画
+
+        # Cosmetic pen：线宽以屏幕像素为单位，不受缩放影响
+        # 根据缩放自适应线宽
+        minor_pen = QPen(QColor(60, 60, 60, 140))
+        minor_pen.setWidthF(1.0)
+        minor_pen.setCosmetic(True)
+
+        mid_pen = QPen(QColor(85, 85, 85, 200))
+        mid_pen.setWidthF(1.0)
+        mid_pen.setCosmetic(True)
+
+        major_pen = QPen(QColor(120, 120, 120, 240))
+        major_pen.setWidthF(1.5 if scale > 0.15 else 1.0)
+        major_pen.setCosmetic(True)
+
+        # 计算可见范围（仅绘制可见区域内的线条）
+        # 选取当前最细的可见层级作为步长
+        if show_minor:
+            step = step_small
+        elif show_mid:
+            step = step_mid
+        else:
+            step = step_major
+
+        left = max(0, int(visible.left()) // step * step)
+        right = min(self._atlas_size, int(visible.right()) + step)
+        top = max(0, int(visible.top()) // step * step)
+        bottom = min(self._atlas_size, int(visible.bottom()) + step)
+
+        vt = max(0, int(visible.top()))
+        vb = min(self._atlas_size, int(visible.bottom()))
+        vl = max(0, int(visible.left()))
+        vr = min(self._atlas_size, int(visible.right()))
 
         # 竖线
-        x = step_small
-        while x < size:
-            if x % step_major == 0:
-                p.setPen(major_pen)
-            elif x % step_mid == 0:
-                p.setPen(mid_pen)
+        x = left
+        while x <= right:
+            if x == 0 or x == self._atlas_size:
+                x += step
+                continue
+            if x % step_major == 0 and show_major:
+                painter.setPen(major_pen)
+            elif x % step_mid == 0 and show_mid:
+                painter.setPen(mid_pen)
+            elif x % step_small == 0 and show_minor:
+                painter.setPen(minor_pen)
             else:
-                p.setPen(minor_pen)
-            p.drawLine(x, 0, x, size)
-            x += step_small
+                x += step
+                continue
+            painter.drawLine(x, vt, x, vb)
+            x += step
 
         # 横线
-        y = step_small
-        while y < size:
-            if y % step_major == 0:
-                p.setPen(major_pen)
-            elif y % step_mid == 0:
-                p.setPen(mid_pen)
+        y = top
+        while y <= bottom:
+            if y == 0 or y == self._atlas_size:
+                y += step
+                continue
+            if y % step_major == 0 and show_major:
+                painter.setPen(major_pen)
+            elif y % step_mid == 0 and show_mid:
+                painter.setPen(mid_pen)
+            elif y % step_small == 0 and show_minor:
+                painter.setPen(minor_pen)
             else:
-                p.setPen(minor_pen)
-            p.drawLine(0, y, size, y)
-            y += step_small
-
-        p.end()
-        self._grid_cache = pm
-        self._grid_cache_size = size
+                y += step
+                continue
+            painter.drawLine(vl, y, vr, y)
+            y += step
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         super().drawBackground(painter, rect)
@@ -120,75 +169,11 @@ class AtlasGraphicsScene(QGraphicsScene):
 
         atlas_rect = QRectF(0, 0, self._atlas_size, self._atlas_size)
 
-        if self._show_grid and self._smooth_mode:
-            # 流畅模式：使用预渲染的 pixmap 缓存
-            self._ensure_grid_cache()
-            painter.drawPixmap(atlas_rect.toRect(), self._grid_cache)
-        else:
-            # 合图区域背景
-            painter.fillRect(atlas_rect, QBrush(QColor(30, 30, 30)))
+        # 合图区域背景
+        painter.fillRect(atlas_rect, QBrush(QColor(30, 30, 30)))
 
-            if self._show_grid:
-                visible = rect.intersected(atlas_rect)
-                if not visible.isEmpty():
-                    step_small = GRID_UNIT   # 16px
-                    step_mid = 64
-                    step_major = 256
-
-                    # 16px 细网格线 - 更明亮
-                    minor_pen = QPen(QColor(70, 70, 70, 180))
-                    minor_pen.setWidthF(0)
-                    minor_pen.setCosmetic(True)
-
-                    # 64px 中等网格线 - 更明亮
-                    mid_pen = QPen(QColor(100, 100, 100, 220))
-                    mid_pen.setWidthF(0)
-                    mid_pen.setCosmetic(True)
-
-                    # 256px 粗网格线 - 更明亮加粗
-                    major_pen = QPen(QColor(140, 140, 140, 255))
-                    major_pen.setWidthF(1.5)
-                    major_pen.setCosmetic(True)
-
-                    left = max(0, int(visible.left()) // step_small * step_small)
-                    right = min(self._atlas_size, int(visible.right()) + step_small)
-                    top = max(0, int(visible.top()) // step_small * step_small)
-                    bottom = min(self._atlas_size, int(visible.bottom()) + step_small)
-
-                    vt = max(0, int(visible.top()))
-                    vb = min(self._atlas_size, int(visible.bottom()))
-                    vl = max(0, int(visible.left()))
-                    vr = min(self._atlas_size, int(visible.right()))
-
-                    # 竖线
-                    x = left
-                    while x <= right:
-                        if x == 0 or x == self._atlas_size:
-                            x += step_small
-                            continue
-                        if x % step_major == 0:
-                            painter.setPen(major_pen)
-                        elif x % step_mid == 0:
-                            painter.setPen(mid_pen)
-                        else:
-                            painter.setPen(minor_pen)
-                        painter.drawLine(x, vt, x, vb)
-                        x += step_small
-
-                    # 横线
-                    y = top
-                    while y <= bottom:
-                        if y == 0 or y == self._atlas_size:
-                            y += step_small
-                            continue
-                        if y % step_major == 0:
-                            painter.setPen(major_pen)
-                        elif y % step_mid == 0:
-                            painter.setPen(mid_pen)
-                        else:
-                            painter.setPen(minor_pen)
-                        painter.drawLine(vl, y, vr, y)
-                        y += step_small
+        if self._show_grid:
+            self._draw_grid(painter, rect)
 
         # 合图范围边框 - 始终显示，更明显
         border_pen = QPen(QColor(COLOR_PRIMARY), 3.0, Qt.PenStyle.SolidLine)
@@ -576,6 +561,11 @@ class AtlasEditorView(QWidget):
             self._zoom_slider.setValue(scale_percent)
             self._zoom_slider.blockSignals(False)
             self._zoom_value_label.setText(f"{scale_percent}%")
+            # 刷新背景缓存
+            if self._smooth_mode:
+                self._view.resetCachedContent()
+                self._scene.invalidate(self._scene.sceneRect(),
+                                       QGraphicsScene.SceneLayer.BackgroundLayer)
 
     # ---- Drop handling ----
     def _drag_enter_event(self, event: QDragEnterEvent):
@@ -982,6 +972,11 @@ class AtlasEditorView(QWidget):
         self._view.resetTransform()
         self._view.scale(scale, scale)
         self._zoom_value_label.setText(f"{percent}%")
+        # 缩放后刷新背景（网格根据缩放自适应）
+        if self._smooth_mode:
+            self._view.resetCachedContent()
+            self._scene.invalidate(self._scene.sceneRect(),
+                                   QGraphicsScene.SceneLayer.BackgroundLayer)
 
     def _wheel_event(self, event: QWheelEvent):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -996,6 +991,9 @@ class AtlasEditorView(QWidget):
             event.accept()
         else:
             QGraphicsView.wheelEvent(self._view, event)
+            # 普通滚轮后也可能改变可视区域，刷新背景
+            if self._smooth_mode:
+                self._view.resetCachedContent()
 
     def _view_mouse_press(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.MiddleButton:
