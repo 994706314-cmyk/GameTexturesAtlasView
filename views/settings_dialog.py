@@ -569,11 +569,10 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-12）\n"
-            "  · 修复：自动更新重启时 Failed to load Python DLL 报错\n"
-            "  · 改进：清除 _MEIPASS2 环境变量 + 等待旧 _MEI 目录消失\n"
-            "  · 改进：启动时自动清理残留的 _MEI 临时目录\n\n"
-            "V1.8.2（2026-03-12）\n"
-            "  · 修复：重启脚本等待旧 _MEI 目录释放后再启动\n\n"
+            "  · 修复：自动更新重启 Failed to load Python DLL 报错\n"
+            "  · 根因：PyInstaller 6.x 使用 _PYI_APPLICATION_HOME_DIR\n"
+            "    而非旧版 _MEIPASS2，之前清错了变量\n"
+            "  · 改进：启动时自动清理残留 _MEI 临时目录\n\n"
             "V1.8.1（2026-03-12）\n"
             "  · 新增：编辑窗口点击贴图时素材库自动跳转选中\n"
             "  · 新增：素材库移除图片时编辑窗口图集同步移除\n"

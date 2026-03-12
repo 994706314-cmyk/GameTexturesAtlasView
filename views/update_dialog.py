@@ -391,6 +391,15 @@ class UpdateDialog(QDialog):
         self._later_btn.clicked.disconnect()
         self._later_btn.clicked.connect(self.reject)
 
+    # PyInstaller 6.x bootloader 使用的内部环境变量列表
+    # 子进程会继承这些变量，导致新启动的 EXE 尝试使用旧的 _MEI 临时目录
+    _PYI_ENV_VARS = [
+        "_PYI_APPLICATION_HOME_DIR",   # 6.x: 临时解压目录路径
+        "_PYI_PARENT_PROCESS_LEVEL",   # 6.x: 父/子进程级别标记
+        "_PYI_SPLASH_IPC",             # 6.x: splash screen IPC
+        "_MEIPASS2",                   # 旧版: 临时解压目录路径（兼容）
+    ]
+
     def _on_restart(self):
         """立即重启应用：先退出当前进程，再通过延迟脚本启动新版本"""
         self._stop_countdown()
@@ -409,10 +418,13 @@ class UpdateDialog(QDialog):
             lines = [
                 "@echo off",
                 "chcp 65001 >nul 2>&1",
-                # 清除 PyInstaller 内部环境变量，避免新进程继承后
-                # 尝试使用已不存在的 _MEI 目录
-                "set _MEIPASS2=",
-                "set _PYI_SPLASH_IPC=",
+            ]
+
+            # 清除 **所有** PyInstaller 内部环境变量（6.x + 旧版兼容）
+            for var in self._PYI_ENV_VARS:
+                lines.append(f"set {var}=")
+
+            lines += [
                 f"echo Waiting for process {pid} to exit...",
                 ":wait_pid",
                 f'tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul',
@@ -426,7 +438,7 @@ class UpdateDialog(QDialog):
             # 等待旧 _MEI 目录完全消失（最多 15 秒）
             if mei_dir and os.path.basename(mei_dir).startswith("_MEI"):
                 lines += [
-                    f'echo Waiting for temp directory cleanup...',
+                    "echo Waiting for temp directory cleanup...",
                     "set /a _count=0",
                     ":wait_mei",
                     f'if not exist "{mei_dir}" goto mei_done',
@@ -445,7 +457,6 @@ class UpdateDialog(QDialog):
             lines += [
                 "timeout /t 2 /nobreak >nul",
                 "echo Starting new version...",
-                # 用 start 启动新 EXE（_MEIPASS2 已在脚本开头清除，不会传递脏值）
                 f'start "" "{exe_path}"',
                 # 脚本自删除
                 f'del "{bat_path}"',
@@ -453,23 +464,24 @@ class UpdateDialog(QDialog):
 
             bat_content = "\n".join(lines) + "\n"
 
+            # 构建干净的环境变量（移除所有 PyInstaller 内部变量）
+            clean_env = os.environ.copy()
+            for var in self._PYI_ENV_VARS:
+                clean_env.pop(var, None)
+
             try:
                 with open(bat_path, "w", encoding="utf-8") as f:
                     f.write(bat_content)
-                # 启动 bat 脚本（隐藏窗口）
+                # 启动 bat 脚本（隐藏窗口 + 干净环境）
                 subprocess.Popen(
                     ["cmd", "/c", bat_path],
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     close_fds=True,
-                    # 关键：用干净的环境启动 bat，不继承当前进程的 _MEIPASS2
-                    env={**os.environ, "_MEIPASS2": "", "_PYI_SPLASH_IPC": ""},
+                    env=clean_env,
                 )
             except Exception:
-                # bat 失败则回退到直接启动
+                # bat 失败则回退到直接启动（也用干净环境）
                 try:
-                    clean_env = os.environ.copy()
-                    clean_env.pop("_MEIPASS2", None)
-                    clean_env.pop("_PYI_SPLASH_IPC", None)
                     subprocess.Popen(
                         [exe_path],
                         close_fds=True,
