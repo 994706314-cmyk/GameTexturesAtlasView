@@ -458,7 +458,10 @@ def apply_update(temp_exe_path: str) -> Tuple[bool, str]:
 
 
 def cleanup_old_exe():
-    """启动时清理上次更新遗留的 .old 文件和重启脚本"""
+    """启动时清理上次更新遗留的 .old 文件、重启脚本和残留 _MEI 临时目录"""
+    import glob
+    import tempfile
+
     current_exe = _get_exe_path()
     if not current_exe:
         return
@@ -475,5 +478,21 @@ def cleanup_old_exe():
     if os.path.exists(bat_path):
         try:
             os.remove(bat_path)
+        except Exception:
+            pass
+    # 清理残留的 _MEI 临时目录（不是当前进程的）
+    if getattr(sys, 'frozen', False):
+        current_mei = getattr(sys, '_MEIPASS', '')
+        temp_dir = tempfile.gettempdir()
+        try:
+            for entry in os.scandir(temp_dir):
+                if (entry.is_dir()
+                        and entry.name.startswith('_MEI')
+                        and entry.path != current_mei):
+                    try:
+                        import shutil
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                    except Exception:
+                        pass
         except Exception:
             pass

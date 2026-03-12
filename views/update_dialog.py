@@ -398,10 +398,15 @@ class UpdateDialog(QDialog):
         import sys
         import os
         import tempfile
+        import glob
 
         exe_path = sys.executable if getattr(sys, 'frozen', False) else None
         if exe_path:
-            # 创建延迟启动脚本：等待旧进程退出后再启动新版本
+            # 获取当前 _MEI 临时目录路径，以便重启脚本清理
+            mei_dir = getattr(sys, '_MEIPASS', '')
+            temp_root = tempfile.gettempdir()
+
+            # 创建延迟启动脚本：等待旧进程退出 + 清理 _MEI 残留 + 启动新版本
             pid = os.getpid()
             bat_path = os.path.join(
                 os.path.dirname(exe_path), "_restart.bat"
@@ -416,6 +421,16 @@ class UpdateDialog(QDialog):
                 "    timeout /t 1 /nobreak >nul\n"
                 "    goto wait_loop\n"
                 ")\n"
+                "echo Process exited. Waiting for cleanup...\n"
+                "timeout /t 3 /nobreak >nul\n"
+            )
+            # 如果有 _MEI 目录，强制清理残留
+            if mei_dir and os.path.basename(mei_dir).startswith("_MEI"):
+                bat_content += (
+                    f"echo Cleaning up old temp directory...\n"
+                    f"if exist \"{mei_dir}\" rmdir /s /q \"{mei_dir}\" >nul 2>&1\n"
+                )
+            bat_content += (
                 "echo Starting new version...\n"
                 f"start \"\" \"{exe_path}\"\n"
                 # 脚本自删除
@@ -431,7 +446,9 @@ class UpdateDialog(QDialog):
                     close_fds=True,
                 )
             except Exception:
-                # bat 失败则回退到直接启动
+                # bat 失败则回退到直接启动（等 3 秒让 _MEI 释放）
+                import time
+                time.sleep(1)
                 subprocess.Popen([exe_path], close_fds=True)
 
         self.accept()
