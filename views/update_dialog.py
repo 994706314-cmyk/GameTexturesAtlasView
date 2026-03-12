@@ -397,45 +397,62 @@ class UpdateDialog(QDialog):
         import subprocess
         import sys
         import os
-        import tempfile
-        import glob
 
         exe_path = sys.executable if getattr(sys, 'frozen', False) else None
         if exe_path:
-            # 获取当前 _MEI 临时目录路径，以便重启脚本清理
             mei_dir = getattr(sys, '_MEIPASS', '')
-            temp_root = tempfile.gettempdir()
-
-            # 创建延迟启动脚本：等待旧进程退出 + 清理 _MEI 残留 + 启动新版本
             pid = os.getpid()
-            bat_path = os.path.join(
-                os.path.dirname(exe_path), "_restart.bat"
-            )
-            bat_content = (
-                "@echo off\n"
-                "chcp 65001 >nul 2>&1\n"
-                f"echo Waiting for process {pid} to exit...\n"
-                ":wait_loop\n"
-                f"tasklist /fi \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\n"
-                "if not errorlevel 1 (\n"
-                "    timeout /t 1 /nobreak >nul\n"
-                "    goto wait_loop\n"
-                ")\n"
-                "echo Process exited. Waiting for cleanup...\n"
-                "timeout /t 3 /nobreak >nul\n"
-            )
-            # 如果有 _MEI 目录，强制清理残留
+            exe_dir = os.path.dirname(exe_path)
+            bat_path = os.path.join(exe_dir, "_restart.bat")
+
+            # 构建 bat 脚本
+            lines = [
+                "@echo off",
+                "chcp 65001 >nul 2>&1",
+                # 清除 PyInstaller 内部环境变量，避免新进程继承后
+                # 尝试使用已不存在的 _MEI 目录
+                "set _MEIPASS2=",
+                "set _PYI_SPLASH_IPC=",
+                f"echo Waiting for process {pid} to exit...",
+                ":wait_pid",
+                f'tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul',
+                "if not errorlevel 1 (",
+                "    timeout /t 1 /nobreak >nul",
+                "    goto wait_pid",
+                ")",
+                "echo Process exited.",
+            ]
+
+            # 等待旧 _MEI 目录完全消失（最多 15 秒）
             if mei_dir and os.path.basename(mei_dir).startswith("_MEI"):
-                bat_content += (
-                    f"echo Cleaning up old temp directory...\n"
-                    f"if exist \"{mei_dir}\" rmdir /s /q \"{mei_dir}\" >nul 2>&1\n"
-                )
-            bat_content += (
-                "echo Starting new version...\n"
-                f"start \"\" \"{exe_path}\"\n"
+                lines += [
+                    f'echo Waiting for temp directory cleanup...',
+                    "set /a _count=0",
+                    ":wait_mei",
+                    f'if not exist "{mei_dir}" goto mei_done',
+                    "set /a _count+=1",
+                    "if %_count% GEQ 15 (",
+                    f'    rmdir /s /q "{mei_dir}" >nul 2>&1',
+                    "    goto mei_done",
+                    ")",
+                    "timeout /t 1 /nobreak >nul",
+                    "goto wait_mei",
+                    ":mei_done",
+                    "echo Temp directory cleaned.",
+                ]
+
+            # 额外等 2 秒确保文件系统完全释放
+            lines += [
+                "timeout /t 2 /nobreak >nul",
+                "echo Starting new version...",
+                # 用 start 启动新 EXE（_MEIPASS2 已在脚本开头清除，不会传递脏值）
+                f'start "" "{exe_path}"',
                 # 脚本自删除
-                f"del \"{bat_path}\"\n"
-            )
+                f'del "{bat_path}"',
+            ]
+
+            bat_content = "\n".join(lines) + "\n"
+
             try:
                 with open(bat_path, "w", encoding="utf-8") as f:
                     f.write(bat_content)
@@ -444,12 +461,22 @@ class UpdateDialog(QDialog):
                     ["cmd", "/c", bat_path],
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     close_fds=True,
+                    # 关键：用干净的环境启动 bat，不继承当前进程的 _MEIPASS2
+                    env={**os.environ, "_MEIPASS2": "", "_PYI_SPLASH_IPC": ""},
                 )
             except Exception:
-                # bat 失败则回退到直接启动（等 3 秒让 _MEI 释放）
-                import time
-                time.sleep(1)
-                subprocess.Popen([exe_path], close_fds=True)
+                # bat 失败则回退到直接启动
+                try:
+                    clean_env = os.environ.copy()
+                    clean_env.pop("_MEIPASS2", None)
+                    clean_env.pop("_PYI_SPLASH_IPC", None)
+                    subprocess.Popen(
+                        [exe_path],
+                        close_fds=True,
+                        env=clean_env,
+                    )
+                except Exception:
+                    pass
 
         self.accept()
         from PySide6.QtWidgets import QApplication

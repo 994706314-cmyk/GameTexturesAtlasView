@@ -569,8 +569,8 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-12）\n"
-            "  · 修复：自动更新重启时 Python DLL 加载失败的报错\n"
-            "  · 改进：重启脚本等待旧进程释放 _MEI 临时目录后再启动\n"
+            "  · 修复：自动更新重启时 Failed to load Python DLL 报错\n"
+            "  · 改进：清除 _MEIPASS2 环境变量 + 等待旧 _MEI 目录消失\n"
             "  · 改进：启动时自动清理残留的 _MEI 临时目录\n\n"
             "V1.8.1（2026-03-12）\n"
             "  · 新增：编辑窗口点击贴图时素材库自动跳转选中\n"

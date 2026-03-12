@@ -216,7 +216,7 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.8.2"  # 修复：更新重启时 _MEI 临时目录未释放导致 Python DLL 加载失败
+APP_VERSION = "1.8.2"  # 修复：更新重启时清除 _MEIPASS2 环境变量+等待 _MEI 目录消失
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"
