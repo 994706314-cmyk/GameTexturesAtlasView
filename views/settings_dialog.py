@@ -46,7 +46,7 @@ class SettingsDialog(QDialog):
     def __init__(self, current_settings: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setFixedSize(640, 780)
+        self.setFixedSize(720, 780)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._settings = current_settings.copy()
@@ -470,27 +470,91 @@ class SettingsDialog(QDialog):
         desc_label = QLabel(
             "合图规划工具用于在合图打包前对贴图素材进行可视化布局规划，\n"
             "支持拖拽排列、尺寸压缩映射、多合图管理等功能，\n"
-            "帮助美术和技术同学高效完成贴图合图的前期规划工作。\n\n"
-            "📐 规划模式：\n"
-            "  · 导入贴图素材，拖拽排列到合图画布\n"
-            "  · 截图添加贴图（Alt+D），快速创建占位贴图\n"
-            "  · 自动映射压缩、自动规划合图、撤销/重做\n"
-            "  · 宽度配色区分、Excel 导出（预览/完整模式）\n"
-            "  · 异步导出 + 进度条，导出不阻塞主界面\n\n"
-            "🔍 检查模式：\n"
-            "  · 导入已合成的 Atlas 图集，梯次网格扫描\n"
-            "  · 跨图集重复内容检测（哈希分桶 O(N) 算法）\n"
-            "  · 多档位检测粒度（2048~16），自动合并同质结果\n"
-            "  · 彩色边框可视化标记 + Excel 分析报告导出\n"
-            "  · 异步导出报告 + 底部进度条，导出不阻塞界面\n"
-            "  · 图集列表多选、右键菜单、增量导入\n"
-            "  · 独立存档系统（.tcheck），与规划模式互不干扰"
+            "帮助美术和技术同学高效完成贴图合图的前期规划工作。"
         )
         desc_label.setWordWrap(True)
         desc_label.setStyleSheet(
             "font-size: 12px; line-height: 1.6; padding: 4px 8px;"
         )
         about_inner.addWidget(desc_label)
+
+        # 规划模式 + 检查模式 左右并排
+        modes_row = QHBoxLayout()
+        modes_row.setSpacing(12)
+
+        # 左侧 - 规划模式
+        plan_frame = QFrame()
+        plan_frame.setStyleSheet("""
+            QFrame {
+                border: 1px solid #3C3C3C;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        plan_layout_inner = QVBoxLayout(plan_frame)
+        plan_layout_inner.setContentsMargins(10, 8, 10, 8)
+        plan_layout_inner.setSpacing(4)
+
+        plan_title = QLabel("📐 规划模式")
+        plan_title.setStyleSheet(
+            f"font-size: 13px; font-weight: bold; color: {COLOR_PRIMARY}; "
+            "border: none; padding: 0;"
+        )
+        plan_layout_inner.addWidget(plan_title)
+
+        plan_desc = QLabel(
+            "· 导入贴图素材，拖拽排列到合图画布\n"
+            "· 截图添加贴图（Alt+D），快速创建占位贴图\n"
+            "· 自动映射压缩、自动规划合图、撤销/重做\n"
+            "· 宽度配色区分、Excel 导出（预览/完整模式）\n"
+            "· 异步导出 + 进度条，导出不阻塞主界面"
+        )
+        plan_desc.setWordWrap(True)
+        plan_desc.setStyleSheet(
+            "font-size: 11px; line-height: 1.5; border: none; padding: 0;"
+        )
+        plan_layout_inner.addWidget(plan_desc)
+        plan_layout_inner.addStretch()
+
+        # 右侧 - 检查模式
+        check_frame = QFrame()
+        check_frame.setStyleSheet("""
+            QFrame {
+                border: 1px solid #3C3C3C;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        check_layout_inner = QVBoxLayout(check_frame)
+        check_layout_inner.setContentsMargins(10, 8, 10, 8)
+        check_layout_inner.setSpacing(4)
+
+        check_title = QLabel("🔍 检查模式")
+        check_title.setStyleSheet(
+            f"font-size: 13px; font-weight: bold; color: {REVERSE_COLOR_PRIMARY}; "
+            "border: none; padding: 0;"
+        )
+        check_layout_inner.addWidget(check_title)
+
+        check_desc = QLabel(
+            "· 导入已合成的 Atlas 图集，梯次网格扫描\n"
+            "· 跨图集重复内容检测（哈希分桶 O(N) 算法）\n"
+            "· 多档位检测粒度（2048~16），自动合并同质结果\n"
+            "· 彩色边框可视化标记 + Excel 分析报告导出\n"
+            "· 异步导出报告 + 底部进度条，导出不阻塞界面\n"
+            "· 图集列表多选、右键菜单、增量导入\n"
+            "· 独立存档系统（.tcheck），与规划模式互不干扰"
+        )
+        check_desc.setWordWrap(True)
+        check_desc.setStyleSheet(
+            "font-size: 11px; line-height: 1.5; border: none; padding: 0;"
+        )
+        check_layout_inner.addWidget(check_desc)
+        check_layout_inner.addStretch()
+
+        modes_row.addWidget(plan_frame, 1)
+        modes_row.addWidget(check_frame, 1)
+        about_inner.addLayout(modes_row)
 
         # 分割线
         sep2 = QFrame()
@@ -505,6 +569,8 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-11）\n"
+            "  · 改进：关于页面规划/检查模式描述改为左右并排布局\n\n"
+            "V1.7.0（2026-03-11）\n"
             "  · 修复：自动整理+拖拽冲突导致按钮永久锁灰\n"
             "  · 重写：检查更新不再依赖 GitHub API（彻底解决 403 限流）\n"
             "  · 新增：更新前自动保存项目，重启后自动恢复\n"
