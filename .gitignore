@@ -29,3 +29,6 @@ AltasToolV1/
 
 # CodeBuddy
 .codebuddy/
+
+# Secrets
+api.txt

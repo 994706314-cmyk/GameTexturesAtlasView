@@ -36,13 +36,25 @@ class TextureGraphicsItem(QGraphicsObject):
     size_change_requested = Signal(str)  # texture_id - 请求修改规划尺寸
     clicked = Signal(str)  # texture_id - 点击时通知外部（用于素材库联动选中）
 
+    # 标记类型配色（与素材库一致）
+    TAG_COLORS = {
+        "E": ("#FF6B00", "#FFFFFF"),   # 橙底 - 自发光
+        "A": ("#00AAFF", "#FFFFFF"),   # 蓝底 - 半透明
+        "M": ("#8BC34A", "#FFFFFF"),   # 黄绿底 - Mask
+        "C1": ("#9C27B0", "#FFFFFF"),  # 紫底 - 自定义1
+        "C2": ("#00897B", "#FFFFFF"),  # 青底 - 自定义2
+        "C3": ("#E91E63", "#FFFFFF"),  # 粉底 - 自定义3
+    }
+
     def __init__(self, texture_id: str, name: str,
                  grid_w: int, grid_h: int,
                  thumbnail_path: str = None,
+                 tag: str = "",
                  parent=None):
         super().__init__(parent)
         self.texture_id = texture_id
         self._name = name
+        self._tag = tag
         self._grid_w = grid_w
         self._grid_h = grid_h
         self._pixel_w = grid_w * GRID_UNIT
@@ -195,6 +207,26 @@ class TextureGraphicsItem(QGraphicsObject):
             painter.drawText(size_rect,
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                              size_text)
+
+        # 标记类型角标（右上角）
+        if self._tag and self._tag in self.TAG_COLORS:
+            bg_hex, fg_hex = self.TAG_COLORS[self._tag]
+            badge_w = max(20, min(28, self._pixel_w // 5))
+            badge_h = max(14, min(18, self._pixel_h // 6))
+            badge_x = self._pixel_w - badge_w - 2
+            badge_y = 2
+            # 角标背景
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(bg_hex))
+            painter.drawRoundedRect(QRectF(badge_x, badge_y, badge_w, badge_h), 3, 3)
+            # 角标文字
+            badge_font_size = max(6, min(9, badge_w // 3))
+            badge_font = QFont("Microsoft YaHei UI", badge_font_size)
+            badge_font.setBold(True)
+            painter.setFont(badge_font)
+            painter.setPen(QColor(fg_hex))
+            painter.drawText(QRectF(badge_x, badge_y, badge_w, badge_h),
+                             Qt.AlignmentFlag.AlignCenter, self._tag)
 
     def _truncate_name(self, name: str, max_chars: int) -> str:
         if len(name) <= max_chars:

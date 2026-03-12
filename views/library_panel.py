@@ -686,6 +686,7 @@ class LibraryPanel(QWidget):
             tag_colors = {
                 "E": ("#FF6B00", "#FFFFFF"),   # 橙色底 - 自发光 Emissive
                 "A": ("#00AAFF", "#FFFFFF"),   # 蓝色底 - 半透明 Alpha
+                "M": ("#8BC34A", "#FFFFFF"),   # 黄绿底 - Mask
                 "C1": ("#9C27B0", "#FFFFFF"),  # 紫色底 - Custom1
                 "C2": ("#00897B", "#FFFFFF"),  # 青色底 - Custom2
                 "C3": ("#E91E63", "#FFFFFF"),  # 粉色底 - Custom3
@@ -1259,6 +1260,7 @@ class LibraryPanel(QWidget):
         tag_options = [
             ("E — 自发光 (Emissive)", "E"),
             ("A — 半透明 (Alpha)", "A"),
+            ("M — 遮罩 (Mask)", "M"),
             ("C1 — 自定义1", "C1"),
             ("C2 — 自定义2", "C2"),
             ("C3 — 自定义3", "C3"),

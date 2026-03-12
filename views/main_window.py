@@ -495,7 +495,7 @@ class MainWindow(QMainWindow):
         ret = QMessageBox.warning(
             self, "自动规划合图",
             "自动规划会删除所有现有的手动合图，并根据素材库中所有图的压缩尺寸重新创建合图。\n"
-            "贴图会按标记类型分组（无标记、E、A、C1、C2、C3 各自独立合图）。\n\n"
+            "贴图会按标记类型分组（无标记、E、A、M、C1、C2、C3 各自独立合图）。\n\n"
             "建议先保存当前项目后再执行此操作。\n\n"
             "确定要继续自动规划吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -524,6 +524,7 @@ class MainWindow(QMainWindow):
             "": "合图",
             "E": "合图_E",
             "A": "合图_A",
+            "M": "合图_M",
             "C1": "合图_C1",
             "C2": "合图_C2",
             "C3": "合图_C3",
@@ -531,8 +532,8 @@ class MainWindow(QMainWindow):
 
         total_remaining = 0
 
-        # 按标记组排序：无标记优先，再 E、A、C1、C2、C3
-        tag_order = ["", "E", "A", "C1", "C2", "C3"]
+        # 按标记组排序：无标记优先，再 E、A、M、C1、C2、C3
+        tag_order = ["", "E", "A", "M", "C1", "C2", "C3"]
         sorted_tags = sorted(tag_groups.keys(), key=lambda t: tag_order.index(t) if t in tag_order else 99)
 
         for tag in sorted_tags:

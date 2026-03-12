@@ -289,6 +289,16 @@ class AtlasOutlinePanel(QWidget):
 class AtlasCardWidget(QWidget):
     """合图卡片组件"""
 
+    # 标记类型配色（与素材库一致）
+    TAG_COLORS = {
+        "E": ("#FF6B00", "#FFFFFF"),   # 橙底 - 自发光
+        "A": ("#00AAFF", "#FFFFFF"),   # 蓝底 - 半透明
+        "M": ("#8BC34A", "#FFFFFF"),   # 黄绿底 - Mask
+        "C1": ("#9C27B0", "#FFFFFF"),  # 紫底 - 自定义1
+        "C2": ("#00897B", "#FFFFFF"),  # 青底 - 自定义2
+        "C3": ("#E91E63", "#FFFFFF"),  # 粉底 - 自定义3
+    }
+
     rename_requested = Signal(str)
     size_changed = Signal(str, int)  # atlas_id, new_size
 
@@ -297,6 +307,21 @@ class AtlasCardWidget(QWidget):
         self._atlas = atlas
         self._index = index  # 1-based 序号
         self._init_ui()
+
+    @staticmethod
+    def _detect_tag(atlas: AtlasModel) -> str:
+        """从图集名称或已放置贴图推断标记类型"""
+        name = atlas.name
+        # 尝试从名称匹配 "合图_X" 模式
+        for tag in ("C1", "C2", "C3", "E", "A", "M"):
+            if f"_{tag}" in name:
+                return tag
+        # 从已放置贴图推断（取第一张的 tag）
+        if atlas.placed_textures:
+            first_tag = atlas.placed_textures[0].texture.tag
+            if first_tag:
+                return first_tag
+        return ""
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
@@ -316,6 +341,23 @@ class AtlasCardWidget(QWidget):
                 font-weight: bold;
             """)
             layout.addWidget(index_label)
+
+        # 标记类型角标
+        tag = self._detect_tag(self._atlas)
+        if tag and tag in self.TAG_COLORS:
+            bg, fg = self.TAG_COLORS[tag]
+            tag_label = QLabel(tag)
+            tag_label.setFixedSize(22, 22)
+            tag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tag_label.setStyleSheet(f"""
+                background-color: {bg};
+                color: {fg};
+                border-radius: 11px;
+                font-size: 9px;
+                font-weight: bold;
+            """)
+            tag_label.setToolTip(f"标记类型: {tag}")
+            layout.addWidget(tag_label)
 
         preview = QLabel()
         preview.setFixedSize(48, 48)

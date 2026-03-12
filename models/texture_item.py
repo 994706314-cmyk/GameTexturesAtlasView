@@ -22,7 +22,7 @@ class TextureItem:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     thumbnail_path: Optional[str] = None
     is_screenshot: bool = False  # 截图添加的贴图（无源文件）
-    tag: str = ""  # 标记类型：""(无)、"E"(自发光)、"A"(半透明)、"C1"/"C2"/"C3"(自定义)
+    tag: str = ""  # 标记类型：""(无)、"E"(自发光)、"A"(半透明)、"M"(Mask)、"C1"/"C2"/"C3"(自定义)
 
     @property
     def display_width(self) -> int:
