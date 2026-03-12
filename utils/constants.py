@@ -216,7 +216,7 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"

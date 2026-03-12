@@ -350,7 +350,7 @@ class LibraryPanel(QWidget):
         self._tree_list.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self._tree_list.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._tree_list.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._tree_list.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._tree_list.header().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._tree_list.header().setDefaultSectionSize(300)
         self._tree_list.setColumnWidth(0, 300)
         self._tree_list.setIconSize(QSize(50, 32))
@@ -519,14 +519,7 @@ class LibraryPanel(QWidget):
         item.setText(0, tex.name)
         item.setText(1, f"{tex.display_width}x{tex.display_height}")
         item.setText(2, f"{tex.original_size[0]}x{tex.original_size[1]}")
-        # 合图使用列 - 用圆圈数字
-        if atlas_indices:
-            badge_text = " ".join(
-                _CIRCLED_NUMBERS.get(i, str(i)) for i in sorted(atlas_indices)
-            )
-            item.setText(3, badge_text)
-        else:
-            item.setText(3, "-")
+        item.setText(3, "")  # 合图列由自定义图标绘制
         item.setData(0, Qt.ItemDataRole.UserRole, tex.id)
         item.setToolTip(0, tex.original_path)
 
@@ -534,6 +527,13 @@ class LibraryPanel(QWidget):
         bg_color = self._get_width_color_for_tex(tex.display_width)
         icon = self._make_tree_icon_with_dot(tex, bg_color)
         item.setIcon(0, icon)
+
+        # 合图列 - 标记角标 + 蓝色图标样式序号
+        atlas_icon = self._make_atlas_column_icon(tex, atlas_indices)
+        if atlas_icon:
+            item.setIcon(3, atlas_icon)
+        else:
+            item.setText(3, "-")
 
         self._tree_list.addTopLevelItem(item)
 
@@ -606,6 +606,89 @@ class LibraryPanel(QWidget):
             painter.setFont(font)
             painter.drawText(thumb_x, 0, icon_size, icon_size,
                              Qt.AlignmentFlag.AlignCenter, "缺失")
+
+        painter.end()
+        return QIcon(QPixmap.fromImage(img))
+
+    def _make_atlas_column_icon(self, tex: TextureItem, atlas_indices: List[int]) -> Optional[QIcon]:
+        """生成合图列图标：标记角标 + 蓝色圆角矩形序号"""
+        tag = tex.tag
+        has_tag = bool(tag)
+        has_indices = bool(atlas_indices)
+
+        if not has_tag and not has_indices:
+            return None
+
+        # 计算图标尺寸
+        badge_h = 20  # 序号图标高度
+        badge_radius = 5
+        tag_size = 18  # 标记角标尺寸
+        tag_radius = 9
+        spacing = 3
+        padding = 2
+
+        # 标记角标配色
+        tag_colors = {
+            "E": ("#FF6B00", "#FFFFFF"),
+            "A": ("#00AAFF", "#FFFFFF"),
+            "M": ("#8BC34A", "#FFFFFF"),
+            "C1": ("#9C27B0", "#FFFFFF"),
+            "C2": ("#00897B", "#FFFFFF"),
+            "C3": ("#E91E63", "#FFFFFF"),
+        }
+
+        # 计算总宽度
+        total_w = padding
+        elements = []  # (type, data, x, w)
+
+        if has_tag:
+            tag_bg, tag_fg = tag_colors.get(tag, ("#666666", "#FFFFFF"))
+            elements.append(("tag", (tag, tag_bg, tag_fg), total_w, tag_size))
+            total_w += tag_size + spacing
+
+        if has_indices:
+            sorted_indices = sorted(atlas_indices)
+            for idx in sorted_indices:
+                text = str(idx)
+                # 动态计算宽度
+                text_w = max(badge_h, len(text) * 10 + 10)
+                elements.append(("badge", (text,), total_w, text_w))
+                total_w += text_w + spacing
+
+        total_w += padding
+        total_h = max(badge_h, tag_size) + padding * 2
+
+        img = QImage(total_w, total_h, QImage.Format.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        center_y = total_h // 2
+
+        for etype, edata, ex, ew in elements:
+            if etype == "tag":
+                tag_text, bg_hex, fg_hex = edata
+                ey = center_y - tag_size // 2
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(bg_hex))
+                painter.drawEllipse(ex, ey, tag_size, tag_size)
+                painter.setPen(QColor(fg_hex))
+                tag_font = QFont("Microsoft YaHei UI", 7, QFont.Weight.Bold)
+                painter.setFont(tag_font)
+                painter.drawText(ex, ey, tag_size, tag_size,
+                                 Qt.AlignmentFlag.AlignCenter, tag_text)
+            elif etype == "badge":
+                badge_text = edata[0]
+                ey = center_y - badge_h // 2
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(COLOR_PRIMARY))
+                painter.drawRoundedRect(ex, ey, ew, badge_h, badge_radius, badge_radius)
+                painter.setPen(QColor(255, 255, 255))
+                badge_font = QFont("Microsoft YaHei UI", 8, QFont.Weight.Bold)
+                painter.setFont(badge_font)
+                painter.drawText(ex, ey, ew, badge_h,
+                                 Qt.AlignmentFlag.AlignCenter, badge_text)
 
         painter.end()
         return QIcon(QPixmap.fromImage(img))
@@ -776,11 +859,8 @@ class LibraryPanel(QWidget):
 
     # ---- Tree item click - check if clicking atlas column to jump ----
     def _on_tree_item_clicked(self, item: QTreeWidgetItem, column: int):
-        """点击合图列中的圆圈数字可以跳转到对应合图"""
+        """点击合图列可以跳转到对应合图"""
         if column != 3:
-            return
-        text = item.text(3).strip()
-        if text == "-":
             return
         tid = item.data(0, Qt.ItemDataRole.UserRole)
         usage_id_map = self._build_usage_id_map()
