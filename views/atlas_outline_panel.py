@@ -328,36 +328,46 @@ class AtlasCardWidget(QWidget):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(8)
 
-        # 序号角标（左侧）
-        if self._index > 0:
-            index_label = QLabel(str(self._index))
-            index_label.setFixedSize(22, 22)
-            index_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            index_label.setStyleSheet(f"""
-                background-color: {COLOR_PRIMARY};
-                color: #FFFFFF;
-                border-radius: 11px;
-                font-size: 10px;
-                font-weight: bold;
-            """)
-            layout.addWidget(index_label)
-
-        # 标记类型角标
+        # 左侧角标区域（序号 + 标记类型，垂直排列）
         tag = self._detect_tag(self._atlas)
-        if tag and tag in self.TAG_COLORS:
-            bg, fg = self.TAG_COLORS[tag]
-            tag_label = QLabel(tag)
-            tag_label.setFixedSize(22, 22)
-            tag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            tag_label.setStyleSheet(f"""
-                background-color: {bg};
-                color: {fg};
-                border-radius: 11px;
-                font-size: 9px;
-                font-weight: bold;
-            """)
-            tag_label.setToolTip(f"标记类型: {tag}")
-            layout.addWidget(tag_label)
+        has_index = self._index > 0
+        has_tag = bool(tag and tag in self.TAG_COLORS)
+
+        if has_index or has_tag:
+            badge_layout = QVBoxLayout()
+            badge_layout.setContentsMargins(0, 0, 0, 0)
+            badge_layout.setSpacing(2)
+            badge_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            if has_index:
+                index_label = QLabel(str(self._index))
+                index_label.setFixedSize(22, 22)
+                index_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                index_label.setStyleSheet(f"""
+                    background-color: {COLOR_PRIMARY};
+                    color: #FFFFFF;
+                    border-radius: 11px;
+                    font-size: 10px;
+                    font-weight: bold;
+                """)
+                badge_layout.addWidget(index_label)
+
+            if has_tag:
+                bg, fg = self.TAG_COLORS[tag]
+                tag_label = QLabel(tag)
+                tag_label.setFixedSize(22, 22)
+                tag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                tag_label.setStyleSheet(f"""
+                    background-color: {bg};
+                    color: {fg};
+                    border-radius: 11px;
+                    font-size: 9px;
+                    font-weight: bold;
+                """)
+                tag_label.setToolTip(f"标记类型: {tag}")
+                badge_layout.addWidget(tag_label)
+
+            layout.addLayout(badge_layout)
 
         preview = QLabel()
         preview.setFixedSize(48, 48)

@@ -228,6 +228,7 @@ class LibraryPanel(QWidget):
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("搜索素材...")
         self._search_input.setClearButtonEnabled(True)
+        self._search_input.setMaximumWidth(160)
         self._search_input.textChanged.connect(self._on_search)
         search_row.addWidget(self._search_input)
 
@@ -255,6 +256,22 @@ class LibraryPanel(QWidget):
         self._sort_orig_btn.setStyleSheet(self._sort_btn_style(False))
         self._sort_orig_btn.clicked.connect(lambda: self._set_sort_mode("original_size"))
         search_row.addWidget(self._sort_orig_btn)
+
+        self._sort_tag_btn = QToolButton()
+        self._sort_tag_btn.setText("标记")
+        self._sort_tag_btn.setToolTip("按标记种类排序（E/A/M/C1/C2/C3）")
+        self._sort_tag_btn.setFixedSize(42, 24)
+        self._sort_tag_btn.setStyleSheet(self._sort_btn_style(False))
+        self._sort_tag_btn.clicked.connect(lambda: self._set_sort_mode("tag"))
+        search_row.addWidget(self._sort_tag_btn)
+
+        self._sort_atlas_btn = QToolButton()
+        self._sort_atlas_btn.setText("图集")
+        self._sort_atlas_btn.setToolTip("按所在图集排序")
+        self._sort_atlas_btn.setFixedSize(42, 24)
+        self._sort_atlas_btn.setStyleSheet(self._sort_btn_style(False))
+        self._sort_atlas_btn.clicked.connect(lambda: self._set_sort_mode("atlas"))
+        search_row.addWidget(self._sort_atlas_btn)
 
         # 分隔
         sep = QFrame()
@@ -460,6 +477,19 @@ class LibraryPanel(QWidget):
             lib.sort(key=lambda t: t.display_width * t.display_height, reverse=rev)
         elif self._sort_mode == "original_size":
             lib.sort(key=lambda t: t.original_size[0] * t.original_size[1], reverse=rev)
+        elif self._sort_mode == "tag":
+            # 按标记种类排序：无标记→E→A→M→C1→C2→C3
+            tag_order = {"": 0, "E": 1, "A": 2, "M": 3, "C1": 4, "C2": 5, "C3": 6}
+            lib.sort(key=lambda t: (tag_order.get(t.tag, 99), t.name.lower()), reverse=rev)
+        elif self._sort_mode == "atlas":
+            # 按所在图集排序：按第一个图集的序号排，未在图集中的排最后
+            atlas_order = {}
+            for i, atlas in enumerate(self._project.atlas_list):
+                for pt in atlas.placed_textures:
+                    if pt.texture.id not in atlas_order:
+                        atlas_order[pt.texture.id] = i
+            max_idx = len(self._project.atlas_list)
+            lib.sort(key=lambda t: (atlas_order.get(t.id, max_idx), t.name.lower()), reverse=rev)
         return lib
 
     def _add_to_grid(self, tex: TextureItem, atlas_indices: List[int]):
@@ -725,10 +755,14 @@ class LibraryPanel(QWidget):
         self._sort_name_btn.setText(f"名称{arrow}" if mode == "name" else "名称")
         self._sort_planned_btn.setText(f"规划{arrow}" if mode == "planned_size" else "规划")
         self._sort_orig_btn.setText(f"原始{arrow}" if mode == "original_size" else "原始")
+        self._sort_tag_btn.setText(f"标记{arrow}" if mode == "tag" else "标记")
+        self._sort_atlas_btn.setText(f"图集{arrow}" if mode == "atlas" else "图集")
 
         self._sort_name_btn.setStyleSheet(self._sort_btn_style(mode == "name"))
         self._sort_planned_btn.setStyleSheet(self._sort_btn_style(mode == "planned_size"))
         self._sort_orig_btn.setStyleSheet(self._sort_btn_style(mode == "original_size"))
+        self._sort_tag_btn.setStyleSheet(self._sort_btn_style(mode == "tag"))
+        self._sort_atlas_btn.setStyleSheet(self._sort_btn_style(mode == "atlas"))
 
         self._populate_views()
 
