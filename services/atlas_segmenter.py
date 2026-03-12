@@ -209,10 +209,29 @@ class AtlasSegmenter:
 
     @staticmethod
     def _imread_unicode(file_path: str, flags: int = cv2.IMREAD_UNCHANGED) -> Optional[np.ndarray]:
-        """读取含中文/Unicode路径的图片"""
+        """读取含中文/Unicode路径的图片，含重试和降级方案"""
+        import time
+
+        # 尝试 OpenCV 读取（最多重试 3 次）
+        for attempt in range(3):
+            try:
+                data = np.fromfile(file_path, dtype=np.uint8)
+                img = cv2.imdecode(data, flags)
+                if img is not None:
+                    return img
+            except Exception:
+                pass
+            if attempt < 2:
+                time.sleep(0.1)  # 短暂等待后重试
+
+        # OpenCV 失败时降级到 PIL 读取
         try:
-            data = np.fromfile(file_path, dtype=np.uint8)
-            img = cv2.imdecode(data, flags)
+            from PIL import Image as _PILImage
+            pil_img = _PILImage.open(file_path)
+            pil_img = pil_img.convert("RGBA")
+            np_arr = np.array(pil_img)
+            # PIL 是 RGBA，OpenCV 需要 BGRA
+            img = cv2.cvtColor(np_arr, cv2.COLOR_RGBA2BGRA)
             return img
         except Exception:
             return None

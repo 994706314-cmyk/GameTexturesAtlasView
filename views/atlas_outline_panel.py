@@ -141,16 +141,16 @@ class AtlasOutlinePanel(QWidget):
         self._list.blockSignals(True)
         self._list.setUpdatesEnabled(False)
         self._list.clear()
-        for atlas in self._project.atlas_list:
-            self._add_list_item(atlas)
+        for i, atlas in enumerate(self._project.atlas_list):
+            self._add_list_item(atlas, i + 1)
         self._list.setUpdatesEnabled(True)
         self._list.blockSignals(False)
 
         if self._current_atlas_id:
             self.select_atlas(self._current_atlas_id)
 
-    def _add_list_item(self, atlas: AtlasModel):
-        widget = AtlasCardWidget(atlas)
+    def _add_list_item(self, atlas: AtlasModel, index: int = 0):
+        widget = AtlasCardWidget(atlas, index)
         widget.rename_requested.connect(self._on_rename)
         widget.size_changed.connect(self._on_size_changed)
 
@@ -171,7 +171,7 @@ class AtlasOutlinePanel(QWidget):
         count = len(self._project.atlas_list)
         atlas = AtlasModel(name=f"合图 {count + 1}", size=DEFAULT_ATLAS_SIZE)
         self._project.add_atlas(atlas)
-        self._add_list_item(atlas)
+        self._add_list_item(atlas, count + 1)
         self._list.setCurrentRow(self._list.count() - 1)
         self.project_changed.emit()
 
@@ -292,15 +292,30 @@ class AtlasCardWidget(QWidget):
     rename_requested = Signal(str)
     size_changed = Signal(str, int)  # atlas_id, new_size
 
-    def __init__(self, atlas: AtlasModel, parent=None):
+    def __init__(self, atlas: AtlasModel, index: int = 0, parent=None):
         super().__init__(parent)
         self._atlas = atlas
+        self._index = index  # 1-based 序号
         self._init_ui()
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(8)
+
+        # 序号角标（左侧）
+        if self._index > 0:
+            index_label = QLabel(str(self._index))
+            index_label.setFixedSize(22, 22)
+            index_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            index_label.setStyleSheet(f"""
+                background-color: {COLOR_PRIMARY};
+                color: #FFFFFF;
+                border-radius: 11px;
+                font-size: 10px;
+                font-weight: bold;
+            """)
+            layout.addWidget(index_label)
 
         preview = QLabel()
         preview.setFixedSize(48, 48)

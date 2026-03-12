@@ -681,6 +681,31 @@ class LibraryPanel(QWidget):
             painter.drawText(bx_sc, by_sc, badge_size, badge_size,
                              Qt.AlignmentFlag.AlignCenter, "✂")
 
+        # 贴图标记角标（E/A/C1/C2/C3 — 左上角，截图角标下方）
+        if tex.tag:
+            tag_colors = {
+                "E": ("#FF6B00", "#FFFFFF"),   # 橙色底 - 自发光 Emissive
+                "A": ("#00AAFF", "#FFFFFF"),   # 蓝色底 - 半透明 Alpha
+                "C1": ("#9C27B0", "#FFFFFF"),  # 紫色底 - Custom1
+                "C2": ("#00897B", "#FFFFFF"),  # 青色底 - Custom2
+                "C3": ("#E91E63", "#FFFFFF"),  # 粉色底 - Custom3
+            }
+            tag_bg, tag_fg = tag_colors.get(tex.tag, ("#666666", "#FFFFFF"))
+            tag_text = tex.tag if len(tex.tag) <= 2 else tex.tag
+            tag_font = QFont("Microsoft YaHei UI", 7, QFont.Weight.Bold)
+            painter.setFont(tag_font)
+            fm_tag = painter.fontMetrics()
+            tag_w = max(18, fm_tag.horizontalAdvance(tag_text) + 6)
+            tag_h = 14
+            tag_x = tx + 1
+            tag_y = ty + 1 + (20 if tex.is_screenshot else 0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tag_bg))
+            painter.drawRoundedRect(tag_x, tag_y, tag_w, tag_h, 3, 3)
+            painter.setPen(QColor(tag_fg))
+            painter.drawText(tag_x, tag_y, tag_w, tag_h,
+                             Qt.AlignmentFlag.AlignCenter, tag_text)
+
         painter.end()
         return QIcon(QPixmap.fromImage(img))
 
@@ -961,12 +986,25 @@ class LibraryPanel(QWidget):
         # 获取自动压缩设置
         auto_compress = self._get_auto_compress_settings()
 
-        # 大批量导入时使用 QApplication.processEvents 保持 UI 响应
+        # 创建进度对话框
+        from PySide6.QtWidgets import QProgressDialog
+        progress = QProgressDialog("正在导入图片...", "取消", 0, len(new_paths), self)
+        progress.setWindowTitle("导入图片")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(360)
+
+        imported_count = 0
         from PySide6.QtWidgets import QApplication
-        batch_size = 50  # 每批处理数量
 
         for i, path in enumerate(new_paths):
+            if progress.wasCanceled():
+                break
+
             name = os.path.splitext(os.path.basename(path))[0]
+            progress.setLabelText(f"正在导入: {name} ({i + 1}/{len(new_paths)})")
+            progress.setValue(i)
+
             original_size = ImageService.get_image_size(path)
             if not original_size:
                 continue
@@ -989,22 +1027,36 @@ class LibraryPanel(QWidget):
                 thumbnail_path=thumb,
             )
             self._project.add_texture(tex)
+            imported_count += 1
 
-            # 每批处理完后让 UI 刷新，防止界面假死
-            if (i + 1) % batch_size == 0:
-                QApplication.processEvents()
+            # 每导入一张就追加到视图（逐个出现效果）
+            usage_map = self._build_usage_map()
+            atlas_indices = usage_map.get(tex.id, [])
+            self._add_to_grid(tex, atlas_indices)
+            self._add_to_tree(tex, atlas_indices)
+            self._update_count()
 
+            # 让 UI 刷新，显示逐个出现效果
+            QApplication.processEvents()
+
+        progress.setValue(len(new_paths))
+        progress.close()
+
+        # 最终全量刷新一次确保排序和状态正确
         self.refresh()
         self._skip_external_refresh = True
         self.project_changed.emit()
         self._skip_external_refresh = False
 
-        # 提示信息
-        info_parts = [f"成功导入 {len(new_paths)} 张图片。"]
+        # 提示信息（状态栏，不弹窗打断用户）
+        info_parts = [f"成功导入 {imported_count} 张图片。"]
         if dup_count > 0:
             info_parts.append(f"{dup_count} 张重复已跳过。")
         if excluded_count > 0:
             info_parts.append(f"{excluded_count} 张因后缀排除。")
+        main_win = self.window()
+        if hasattr(main_win, 'statusBar'):
+            main_win.statusBar().showMessage(" ".join(info_parts), 5000)
 
     def _get_auto_compress_settings(self) -> Optional[dict]:
         main_win = self.window()
@@ -1200,6 +1252,24 @@ class LibraryPanel(QWidget):
         count = len(ids)
 
         edit_action = menu.addAction(f"设置分辨率 ({count} 张)" if count > 1 else "设置分辨率")
+
+        # 标记子菜单
+        tag_menu = menu.addMenu(f"标记类型 ({count} 张)" if count > 1 else "标记类型")
+        tag_menu.setStyleSheet(menu.styleSheet())
+        tag_options = [
+            ("E — 自发光 (Emissive)", "E"),
+            ("A — 半透明 (Alpha)", "A"),
+            ("C1 — 自定义1", "C1"),
+            ("C2 — 自定义2", "C2"),
+            ("C3 — 自定义3", "C3"),
+        ]
+        tag_actions = {}
+        for label, tag_val in tag_options:
+            act = tag_menu.addAction(label)
+            tag_actions[act] = tag_val
+        tag_menu.addSeparator()
+        clear_tag_action = tag_menu.addAction("✕ 清除标记")
+
         open_loc_action = menu.addAction("在资源管理器中显示")
         menu.addSeparator()
         remove_action = menu.addAction(f"从素材库移除 ({count} 张)" if count > 1 else "从素材库移除")
@@ -1207,6 +1277,25 @@ class LibraryPanel(QWidget):
         action = menu.exec(widget.mapToGlobal(pos))
         if action == edit_action:
             self._edit_texture_size(ids)
+        elif action in tag_actions:
+            tag_val = tag_actions[action]
+            for tid in ids:
+                tex = self._project.find_texture(tid)
+                if tex:
+                    tex.tag = tag_val
+            self.refresh()
+            self._skip_external_refresh = True
+            self.project_changed.emit()
+            self._skip_external_refresh = False
+        elif action == clear_tag_action:
+            for tid in ids:
+                tex = self._project.find_texture(tid)
+                if tex:
+                    tex.tag = ""
+            self.refresh()
+            self._skip_external_refresh = True
+            self.project_changed.emit()
+            self._skip_external_refresh = False
         elif action == open_loc_action:
             if ids:
                 tex = self._project.find_texture(ids[0])

@@ -22,6 +22,7 @@ class TextureItem:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     thumbnail_path: Optional[str] = None
     is_screenshot: bool = False  # 截图添加的贴图（无源文件）
+    tag: str = ""  # 标记类型：""(无)、"E"(自发光)、"A"(半透明)、"C1"/"C2"/"C3"(自定义)
 
     @property
     def display_width(self) -> int:
@@ -53,6 +54,8 @@ class TextureItem:
         }
         if self.is_screenshot:
             d["is_screenshot"] = True
+        if self.tag:
+            d["tag"] = self.tag
 
         # 将缩略图以 base64 嵌入存档，解决分享后缩略图丢失问题
         if self.thumbnail_path and os.path.exists(self.thumbnail_path):
@@ -101,4 +104,5 @@ class TextureItem:
             name=data.get("name", "未命名"),
             thumbnail_path=thumbnail_path,
             is_screenshot=data.get("is_screenshot", False),
+            tag=data.get("tag", ""),
         )

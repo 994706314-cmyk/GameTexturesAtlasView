@@ -486,7 +486,7 @@ class MainWindow(QMainWindow):
 
     # ---- Auto Plan (自动规划合图) ----
     def _on_auto_plan(self):
-        """自动规划：会删除所有现有合图并重新创建"""
+        """自动规划：按标记分组，各组分别打包合图"""
         if not self._project.library:
             QMessageBox.information(self, "自动规划", "素材库中没有图片，请先导入素材。")
             return
@@ -494,7 +494,8 @@ class MainWindow(QMainWindow):
         # 警告用户
         ret = QMessageBox.warning(
             self, "自动规划合图",
-            "自动规划会删除所有现有的手动合图，并根据素材库中所有图的压缩尺寸重新创建合图。\n\n"
+            "自动规划会删除所有现有的手动合图，并根据素材库中所有图的压缩尺寸重新创建合图。\n"
+            "贴图会按标记类型分组（无标记、E、A、C1、C2、C3 各自独立合图）。\n\n"
             "建议先保存当前项目后再执行此操作。\n\n"
             "确定要继续自动规划吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -512,41 +513,73 @@ class MainWindow(QMainWindow):
         atlas_size = DEFAULT_ATLAS_SIZE
         created_atlases = 0
 
-        remaining = list(self._project.library)
-        remaining.sort(key=lambda t: t.display_width * t.display_height, reverse=True)
+        # 按标记分组
+        from collections import defaultdict
+        tag_groups = defaultdict(list)
+        for tex in self._project.library:
+            tag_groups[tex.tag or ""].append(tex)
 
-        while remaining:
-            count = len(self._project.atlas_list)
-            atlas = AtlasModel(name=f"合图 {count + 1}", size=atlas_size)
+        # 标记名称映射，用于合图命名
+        tag_names = {
+            "": "合图",
+            "E": "合图_E",
+            "A": "合图_A",
+            "C1": "合图_C1",
+            "C2": "合图_C2",
+            "C3": "合图_C3",
+        }
 
-            rects = [
-                PackRect(id=t.id, width=t.display_width, height=t.display_height)
-                for t in remaining
-            ]
-            packer = MaxRectsBinPacker(atlas_size, atlas_size)
-            results = packer.pack(rects)
+        total_remaining = 0
 
-            if not results:
-                break
+        # 按标记组排序：无标记优先，再 E、A、C1、C2、C3
+        tag_order = ["", "E", "A", "C1", "C2", "C3"]
+        sorted_tags = sorted(tag_groups.keys(), key=lambda t: tag_order.index(t) if t in tag_order else 99)
 
-            placed_ids = set()
-            for r in results:
-                tex = self._project.find_texture(r.id)
-                if tex:
-                    pt = PlacedTexture(
-                        texture=tex,
-                        grid_x=r.x // 16,
-                        grid_y=r.y // 16,
-                    )
-                    atlas.place(pt)
-                    placed_ids.add(r.id)
+        for tag in sorted_tags:
+            textures = tag_groups[tag]
+            remaining = list(textures)
+            remaining.sort(key=lambda t: t.display_width * t.display_height, reverse=True)
 
-            if not placed_ids:
-                break
+            group_prefix = tag_names.get(tag, f"合图_{tag}")
+            group_index = 1
 
-            self._project.add_atlas(atlas)
-            created_atlases += 1
-            remaining = [t for t in remaining if t.id not in placed_ids]
+            while remaining:
+                atlas = AtlasModel(
+                    name=f"{group_prefix} {group_index}",
+                    size=atlas_size
+                )
+
+                rects = [
+                    PackRect(id=t.id, width=t.display_width, height=t.display_height)
+                    for t in remaining
+                ]
+                packer = MaxRectsBinPacker(atlas_size, atlas_size)
+                results = packer.pack(rects)
+
+                if not results:
+                    break
+
+                placed_ids = set()
+                for r in results:
+                    tex = self._project.find_texture(r.id)
+                    if tex:
+                        pt = PlacedTexture(
+                            texture=tex,
+                            grid_x=r.x // 16,
+                            grid_y=r.y // 16,
+                        )
+                        atlas.place(pt)
+                        placed_ids.add(r.id)
+
+                if not placed_ids:
+                    break
+
+                self._project.add_atlas(atlas)
+                created_atlases += 1
+                group_index += 1
+                remaining = [t for t in remaining if t.id not in placed_ids]
+
+            total_remaining += len(remaining)
 
         self._outline_panel.set_project(self._project)
         self._library_panel.refresh()
@@ -559,10 +592,17 @@ class MainWindow(QMainWindow):
         self._editor_view.after_change.emit("自动规划合图")
         self._on_project_changed()
 
-        remain_count = len(remaining)
         msg = f"自动规划完成，新建 {created_atlases} 张合图。"
-        if remain_count > 0:
-            msg += f"\n{remain_count} 张素材因尺寸过大无法放入。"
+        if total_remaining > 0:
+            msg += f"\n{total_remaining} 张素材因尺寸过大无法放入。"
+        # 统计分组信息
+        group_info = []
+        for tag in sorted_tags:
+            count = len(tag_groups[tag])
+            label = tag_names.get(tag, tag) if tag else "无标记"
+            group_info.append(f"{label}: {count} 张")
+        if len(tag_groups) > 1:
+            msg += "\n\n分组详情：\n" + "\n".join(group_info)
         QMessageBox.information(self, "自动规划", msg)
 
     # ---- Undo / Redo ----
@@ -677,6 +717,10 @@ class MainWindow(QMainWindow):
             new_smooth = new_settings.get("smooth_mode", DEFAULT_SMOOTH_MODE)
             if new_smooth != old_smooth:
                 self._apply_smooth_mode(new_smooth)
+
+            # 同步检查模式后缀设置
+            new_suffix = new_settings.get("atlas_suffix", DEFAULT_ATLAS_SUFFIX)
+            self._reverse_import_panel.set_atlas_suffix(new_suffix)
 
             # 如果缩略图清晰度变更，清除缓存并刷新
             new_quality = new_settings.get("thumbnail_quality", DEFAULT_THUMBNAIL_QUALITY)

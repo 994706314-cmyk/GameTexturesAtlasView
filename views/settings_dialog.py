@@ -569,6 +569,15 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-12）\n"
+            "  · 规划模式：导入图片异步进度条，素材库逐个显示导入结果\n"
+            "  · 规划模式：素材库贴图标记系统（E/A/C1/C2/C3 角标+右键批量标记）\n"
+            "  · 规划模式：自动规划合图按标记类型分组（无标记/E/A/C1/C2/C3 各自独立）\n"
+            "  · 规划模式：图集列表增加序号角标\n"
+            "  · 检查模式：修复腾讯会议共享屏幕时导入图集失败（重试+PIL降级）\n"
+            "  · 检查模式：导入增加异步进度条弹窗\n"
+            "  · 检查模式：修复设置后缀过滤后导入面板提示未同步\n"
+            "  · 设置：新增「还原所有初始配置」功能\n\n"
+            "V1.8.5（2026-03-12）\n"
             "  · 验证版本：确认重启 DLL 加载修复生效\n\n"
             "V1.8.4（2026-03-12）\n"
             "  · 修复：自动更新重启 Failed to load Python DLL 报错\n"
@@ -600,6 +609,32 @@ class SettingsDialog(QDialog):
 
         # 按钮
         btn_layout = QHBoxLayout()
+
+        reset_all_btn = QPushButton("🔄 还原所有初始配置")
+        reset_all_btn.setFixedWidth(160)
+        reset_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset_all_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #F44336;
+                border: 1px solid #F44336;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #F44336;
+                color: #FFFFFF;
+            }
+            QPushButton:pressed {
+                background-color: #D32F2F;
+                color: #FFFFFF;
+            }
+        """)
+        reset_all_btn.clicked.connect(self._on_reset_all)
+        btn_layout.addWidget(reset_all_btn)
+
         btn_layout.addStretch()
 
         cancel_btn = QPushButton("取消")
@@ -662,6 +697,59 @@ class SettingsDialog(QDialog):
         self._settings.update(result)
         self.settings_changed.emit(result)
         self.accept()
+
+    def _on_reset_all(self):
+        """还原所有设置为初始默认值"""
+        from PySide6.QtWidgets import QMessageBox
+        ret = QMessageBox.warning(
+            self, "还原初始配置",
+            "确定要将所有设置还原为默认值吗？\n\n"
+            "这将重置：撤销步数、快捷键、自动压缩映射、排除后缀、\n"
+            "宽度配色、缩略图清晰度、流畅模式、检查模式参数等。\n\n"
+            "点击「确认」后生效。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        # 通用设置
+        self._undo_spin.setValue(DEFAULT_UNDO_STEPS)
+        idx = self._thumb_quality_combo.findData(DEFAULT_THUMBNAIL_QUALITY)
+        if idx >= 0:
+            self._thumb_quality_combo.setCurrentIndex(idx)
+        self._smooth_mode_check.setChecked(DEFAULT_SMOOTH_MODE)
+        self._exclude_input.setText(",".join(DEFAULT_EXCLUDE_SUFFIXES))
+
+        # 快捷键
+        for key, edit in self._shortcut_edits.items():
+            default_seq = DEFAULT_SHORTCUTS.get(key, "")
+            edit.setKeySequence(QKeySequence(default_seq))
+
+        # 自动压缩
+        self._auto_compress_check.setChecked(True)
+        from utils.constants import DEFAULT_WIDTH_COMPRESS_MAP as _DWCM
+        source_sizes = [2048, 1024, 512, 256, 128, 64, 32, 16]
+        for src in source_sizes:
+            combo = self._width_combos.get(src)
+            if combo:
+                default_target = _DWCM.get(src, src)
+                idx = combo.findData(default_target)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        idx = self._height_mode_combo.findData("proportional")
+        if idx >= 0:
+            self._height_mode_combo.setCurrentIndex(idx)
+
+        # 宽度配色
+        self._reset_default_colors()
+
+        # 检查模式
+        self._atlas_suffix_input.setText(DEFAULT_ATLAS_SUFFIX)
+        self._fuzzy_threshold_spin.setValue(DEFAULT_FUZZY_THRESHOLD)
+        idx = self._min_tier_combo.findData(DEFAULT_MIN_TIER_SIZE)
+        if idx >= 0:
+            self._min_tier_combo.setCurrentIndex(idx)
 
     def _pick_color(self, btn: QPushButton, width: int):
         """弹出颜色选择器让用户自定义配色"""
