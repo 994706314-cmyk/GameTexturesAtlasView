@@ -1,4 +1,16 @@
-"""更新对话框：新版本提示 + 下载进度 + 自动保存/重启/恢复"""
+"""更新对话框：新版本提示 → 保存确认 → 更新确认 → 下载 → 替换重启
+
+流程：
+  1. 检测到新版本后弹出对话框，显示版本信息和更新日志
+  2. 用户点击「更新」按钮
+  3. 检查项目是否有未保存的修改：
+     - 已保存 → 直接进入步骤 4
+     - 未保存 → 弹出保存确认（保存 / 不保存 / 取消）
+  4. 弹出二次确认「确认更新？」
+  5. 开始后台下载新版本 EXE
+  6. 下载完成后：关闭当前应用 → 删除旧版本 → 启动新版本
+  7. 新版本启动后自动恢复关闭前的项目内容
+"""
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -72,7 +84,7 @@ class UpdateDialog(QDialog):
             """)
             layout.addWidget(notes_text, 1)
 
-        # 进度条（初始隐藏）
+        # 进度条区域（初始隐藏）
         self._progress_widget = QWidget()
         p_layout = QVBoxLayout(self._progress_widget)
         p_layout.setContentsMargins(0, 0, 0, 0)
@@ -112,7 +124,7 @@ class UpdateDialog(QDialog):
         self._later_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self._later_btn)
 
-        self._update_btn = QPushButton("立即更新")
+        self._update_btn = QPushButton("更新")
         self._update_btn.setFixedWidth(100)
         self._update_btn.setStyleSheet(f"""
             QPushButton {{
@@ -123,10 +135,44 @@ class UpdateDialog(QDialog):
             QPushButton:hover {{ background-color: #106EBE; }}
             QPushButton:disabled {{ background-color: #555555; }}
         """)
-        self._update_btn.clicked.connect(self._on_start_download)
+        self._update_btn.clicked.connect(self._on_update_clicked)
         btn_layout.addWidget(self._update_btn)
 
         layout.addLayout(btn_layout)
+
+    # =========================================================
+    #  更新按钮点击 → 保存确认 → 更新确认 → 开始下载
+    # =========================================================
+    def _on_update_clicked(self):
+        """用户点击「更新」按钮后的完整流程"""
+        if not self._result.download_url:
+            self._progress_widget.setVisible(True)
+            self._progress_label.setText("❌ 未找到下载链接，请前往 GitHub 手动下载")
+            return
+
+        # 步骤 1: 检查项目保存状态
+        save_ok = self._check_and_save_project()
+        if save_ok is False:
+            # 用户取消了保存，中止更新
+            return
+
+        # 步骤 2: 二次确认是否更新
+        confirm = QMessageBox.question(
+            self, "确认更新",
+            f"确认要更新到 V{self._result.latest_version} 吗？\n\n"
+            "更新将下载新版本并替换当前程序，\n"
+            "完成后会自动重启应用。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        # 步骤 3: 记录更新状态（用于重启后恢复）
+        self._save_state_for_restore()
+
+        # 步骤 4: 开始下载
+        self._start_download()
 
     def _get_main_window(self):
         """获取主窗口引用"""
@@ -138,64 +184,90 @@ class UpdateDialog(QDialog):
             parent = parent.parent() if hasattr(parent, 'parent') else None
         return None
 
-    def _auto_save_before_update(self):
-        """更新前自动保存当前项目，并记录项目路径用于重启后恢复"""
+    def _check_and_save_project(self):
+        """检查项目是否需要保存，返回 True/None 表示可以继续，False 表示取消
+
+        - 项目无修改 → 直接返回 True（不打扰用户）
+        - 项目有修改且有路径 → 提示保存确认
+        - 项目有修改但无路径 → 提示另存为
+        """
         main_win = self._get_main_window()
         if main_win is None:
-            save_update_state(None)
-            return
+            return True
+
+        # 项目没有未保存的修改，跳过保存步骤
+        if not main_win._project.dirty:
+            return True
 
         project_path = getattr(main_win, '_current_file_path', None)
 
-        # 如果项目有未保存的更改
-        if main_win._project.dirty:
-            if project_path:
-                # 有文件路径，直接保存
+        if project_path:
+            # 有路径，提示是否保存
+            ret = QMessageBox.question(
+                self, "保存项目",
+                "当前项目有未保存的修改。\n\n"
+                "是否在更新前保存？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if ret == QMessageBox.StandardButton.Save:
                 main_win._on_save()
-                self._progress_label.setText("已自动保存项目...")
+                return True
+            elif ret == QMessageBox.StandardButton.Discard:
+                # 不保存，继续更新
+                return True
             else:
-                # 没有文件路径，提示用户
-                ret = QMessageBox.question(
-                    self, "保存项目",
-                    "当前项目有未保存的更改。\n是否先保存项目再更新？\n\n"
-                    "选择"是"将弹出保存对话框\n"
-                    "选择"否"将丢弃未保存的更改",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if ret == QMessageBox.StandardButton.Yes:
-                    saved = main_win._on_save_as()
-                    if saved:
-                        project_path = main_win._current_file_path
-                        self._progress_label.setText("项目已保存...")
-                    else:
-                        return False  # 用户取消了保存
-        elif project_path:
-            # 项目没有未保存更改，但有路径，直接记录
-            pass
+                # 取消
+                return False
+        else:
+            # 无路径，提示另存为
+            ret = QMessageBox.question(
+                self, "保存项目",
+                "当前项目有未保存的修改且从未保存过。\n\n"
+                "是否先保存项目再更新？\n"
+                "· 选择「Save」将弹出保存对话框\n"
+                "· 选择「Discard」将丢弃未保存的更改\n"
+                "· 选择「Cancel」取消更新",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if ret == QMessageBox.StandardButton.Save:
+                saved = main_win._on_save_as()
+                if saved:
+                    return True
+                else:
+                    # 用户取消了另存为对话框
+                    return False
+            elif ret == QMessageBox.StandardButton.Discard:
+                return True
+            else:
+                return False
 
+    def _save_state_for_restore(self):
+        """保存更新状态，用于重启后恢复项目"""
+        main_win = self._get_main_window()
+        project_path = None
+        if main_win:
+            project_path = getattr(main_win, '_current_file_path', None)
         save_update_state(project_path)
-        return True
 
-    def _on_start_download(self):
-        """开始下载新版本"""
-        if not self._result.download_url:
-            self._progress_label.setText("❌ 未找到下载链接，请前往 GitHub 手动下载")
-            self._progress_widget.setVisible(True)
-            return
-
-        # 先自动保存
+    # =========================================================
+    #  下载流程
+    # =========================================================
+    def _start_download(self):
+        """开始后台下载新版本"""
         self._progress_widget.setVisible(True)
-        self._progress_label.setText("正在保存当前项目...")
-        result = self._auto_save_before_update()
-        if result is False:
-            self._progress_label.setText("保存已取消")
-            return
+        self._progress_label.setText("正在下载...")
+        self._progress_bar.setValue(0)
 
         self._update_btn.setEnabled(False)
         self._later_btn.setText("取消")
         self._later_btn.clicked.disconnect()
         self._later_btn.clicked.connect(self._on_cancel_download)
-        self._progress_label.setText("正在下载...")
 
         # 启动后台下载
         self._downloader = UpdateDownloader(self._result.download_url)
@@ -232,7 +304,7 @@ class UpdateDialog(QDialog):
             self._progress_label.setText(f"正在下载... {mb_down:.1f} MB")
 
     def _on_download_finished(self, temp_path: str):
-        """下载完成，执行替换"""
+        """下载完成 → 替换 EXE → 重启"""
         self._cleanup_download()
         self._progress_label.setText("正在安装更新...")
         self._progress_bar.setValue(100)
@@ -278,6 +350,9 @@ class UpdateDialog(QDialog):
             self._later_btn.clicked.disconnect()
             self._later_btn.clicked.connect(self.reject)
 
+    # =========================================================
+    #  重启倒计时
+    # =========================================================
     def _update_restart_btn_text(self):
         """更新重启按钮的倒计时文字"""
         if hasattr(self, '_restart_btn'):
@@ -303,6 +378,9 @@ class UpdateDialog(QDialog):
         self._stop_countdown()
         self.accept()
 
+    # =========================================================
+    #  错误处理 & 重启
+    # =========================================================
     def _on_download_error(self, error_msg: str):
         """下载出错"""
         self._cleanup_download()

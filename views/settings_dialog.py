@@ -568,7 +568,10 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(changelog_title)
 
         changelog_text = QLabel(
-            f"V{APP_VERSION}（2026-03-11）\n"
+            f"V{APP_VERSION}（2026-03-12）\n"
+            "  · 改进：更新流程优化，增加保存确认和更新确认步骤\n"
+            "  · 改进：项目已保存时跳过保存提示，未保存时支持保存/丢弃/取消\n\n"
+            "V1.7.1（2026-03-11）\n"
             "  · 改进：关于页面规划/检查模式描述改为左右并排布局\n\n"
             "V1.7.0（2026-03-11）\n"
             "  · 修复：自动整理+拖拽冲突导致按钮永久锁灰\n"
