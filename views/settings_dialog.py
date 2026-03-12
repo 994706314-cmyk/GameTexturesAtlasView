@@ -569,6 +569,8 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-12）\n"
+            "  · 验证版本：确认重启 DLL 加载修复生效\n\n"
+            "V1.8.4（2026-03-12）\n"
             "  · 修复：自动更新重启 Failed to load Python DLL 报错\n"
             "  · 根因：PyInstaller 6.x 使用 _PYI_APPLICATION_HOME_DIR\n"
             "    而非旧版 _MEIPASS2，之前清错了变量\n"
