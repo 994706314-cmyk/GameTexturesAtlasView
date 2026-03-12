@@ -79,8 +79,14 @@ class SizeEditDialog(QDialog):
         self._height_combo.addItem("等比", -1)
         for s in VALID_TEXTURE_SIZES:
             self._height_combo.addItem(f"{s} px", s)
-        # 默认选择"等比"
-        self._height_combo.setCurrentIndex(0)
+        # 默认回显当前实际高度：如果宽高相同则选"等比"，否则选实际高度值
+        cur_w, cur_h = current_display_size
+        if cur_w == cur_h:
+            self._height_combo.setCurrentIndex(0)  # 正方形 → 等比
+        elif cur_h in VALID_TEXTURE_SIZES:
+            self._height_combo.setCurrentIndex(VALID_TEXTURE_SIZES.index(cur_h) + 1)  # +1 跳过"等比"
+        else:
+            self._height_combo.setCurrentIndex(0)
         h_container.addWidget(h_label)
         h_container.addWidget(self._height_combo)
         size_layout.addLayout(h_container)

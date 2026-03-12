@@ -392,14 +392,48 @@ class UpdateDialog(QDialog):
         self._later_btn.clicked.connect(self.reject)
 
     def _on_restart(self):
-        """立即重启应用"""
+        """立即重启应用：先退出当前进程，再通过延迟脚本启动新版本"""
         self._stop_countdown()
         import subprocess
         import sys
+        import os
+        import tempfile
 
         exe_path = sys.executable if getattr(sys, 'frozen', False) else None
         if exe_path:
-            subprocess.Popen([exe_path], close_fds=True)
+            # 创建延迟启动脚本：等待旧进程退出后再启动新版本
+            pid = os.getpid()
+            bat_path = os.path.join(
+                os.path.dirname(exe_path), "_restart.bat"
+            )
+            bat_content = (
+                "@echo off\n"
+                "chcp 65001 >nul 2>&1\n"
+                f"echo Waiting for process {pid} to exit...\n"
+                ":wait_loop\n"
+                f"tasklist /fi \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\n"
+                "if not errorlevel 1 (\n"
+                "    timeout /t 1 /nobreak >nul\n"
+                "    goto wait_loop\n"
+                ")\n"
+                "echo Starting new version...\n"
+                f"start \"\" \"{exe_path}\"\n"
+                # 脚本自删除
+                f"del \"{bat_path}\"\n"
+            )
+            try:
+                with open(bat_path, "w", encoding="utf-8") as f:
+                    f.write(bat_content)
+                # 启动 bat 脚本（隐藏窗口）
+                subprocess.Popen(
+                    ["cmd", "/c", bat_path],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    close_fds=True,
+                )
+            except Exception:
+                # bat 失败则回退到直接启动
+                subprocess.Popen([exe_path], close_fds=True)
+
         self.accept()
         from PySide6.QtWidgets import QApplication
         QApplication.instance().quit()

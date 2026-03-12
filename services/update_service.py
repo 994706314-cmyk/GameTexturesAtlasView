@@ -458,13 +458,22 @@ def apply_update(temp_exe_path: str) -> Tuple[bool, str]:
 
 
 def cleanup_old_exe():
-    """启动时清理上次更新遗留的 .old 文件"""
+    """启动时清理上次更新遗留的 .old 文件和重启脚本"""
     current_exe = _get_exe_path()
     if not current_exe:
         return
+    exe_dir = os.path.dirname(current_exe)
+    # 清理旧 EXE
     old_exe = current_exe + ".old"
     if os.path.exists(old_exe):
         try:
             os.remove(old_exe)
+        except Exception:
+            pass
+    # 清理重启脚本
+    bat_path = os.path.join(exe_dir, "_restart.bat")
+    if os.path.exists(bat_path):
+        try:
+            os.remove(bat_path)
         except Exception:
             pass

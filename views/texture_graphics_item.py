@@ -31,6 +31,7 @@ class TextureGraphicsItem(QGraphicsObject):
 
     position_changed = Signal(str, int, int)
     removed = Signal(str)
+    batch_removed = Signal(list)  # [texture_id, ...] - 批量移除选中贴图
     move_attempted = Signal(str, int, int, object)
     size_change_requested = Signal(str)  # texture_id - 请求修改规划尺寸
 
@@ -296,9 +297,24 @@ class TextureGraphicsItem(QGraphicsObject):
         """)
         size_action = menu.addAction(f"修改规划尺寸 ({self._pixel_w}x{self._pixel_h})")
         menu.addSeparator()
-        remove_action = menu.addAction("从合图中移除")
+
+        # 检测是否框选了多张贴图
+        scene = self.scene()
+        selected = scene.selectedItems() if scene else []
+        selected_count = sum(1 for it in selected if isinstance(it, TextureGraphicsItem))
+
+        if selected_count > 1 and self.isSelected():
+            remove_action = menu.addAction(f"从合图中移除 ({selected_count} 张)")
+        else:
+            remove_action = menu.addAction("从合图中移除")
+
         action = menu.exec(event.screenPos())
         if action == remove_action:
-            self.removed.emit(self.texture_id)
+            if selected_count > 1 and self.isSelected():
+                # 批量移除所有选中项
+                ids = [it.texture_id for it in selected if isinstance(it, TextureGraphicsItem)]
+                self.batch_removed.emit(ids)
+            else:
+                self.removed.emit(self.texture_id)
         elif action == size_action:
             self.size_change_requested.emit(self.texture_id)

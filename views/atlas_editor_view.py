@@ -513,6 +513,7 @@ class AtlasEditorView(QWidget):
 
         item.move_attempted.connect(self._on_item_move_attempted)
         item.removed.connect(self._on_item_removed)
+        item.batch_removed.connect(self._on_batch_removed)
         item.size_change_requested.connect(self._on_item_size_change)
 
         self._scene.addItem(item)
@@ -681,41 +682,125 @@ class AtlasEditorView(QWidget):
             event.ignore()
 
     def _batch_place_textures(self, texture_ids: List[str]):
-        placed_any = False
-        failed_names = []
+        """批量放置贴图：先检查总空间 → 自动整理放入 → 空间不足则警告"""
+        if not self._current_atlas:
+            return
+
+        # 1. 收集所有要放入的贴图
+        textures_to_place = []
         for tid in texture_ids:
             texture = self._project.find_texture(tid)
             if not texture:
                 continue
+            textures_to_place.append(texture)
 
-            if tid in self._items:
-                old_item = self._items.pop(tid)
+        if not textures_to_place:
+            return
+
+        # 2. 计算拖入贴图的总占用面积
+        total_new_area = sum(t.display_width * t.display_height for t in textures_to_place)
+
+        # 3. 计算图集剩余空间（总面积 - 已占用面积，排除即将被替换的）
+        atlas_area = self._current_atlas.size * self._current_atlas.size
+        existing_area = 0
+        for pt in self._current_atlas.placed_textures:
+            if pt.texture.id not in texture_ids:
+                existing_area += pt.texture.display_width * pt.texture.display_height
+        remaining_area = atlas_area - existing_area
+
+        # 4. 如果总面积超出剩余空间，直接警告
+        if total_new_area > remaining_area:
+            count = len(textures_to_place)
+            total_mb = total_new_area / 1024  # 以K为单位展示
+            remain_mb = remaining_area / 1024
+            self._show_toast(
+                f"空间不足：{count} 张贴图需要 {total_new_area}px²，"
+                f"剩余 {remaining_area}px²", 4000
+            )
+            return
+
+        # 5. 移除已存在的旧版本（替换场景）
+        for texture in textures_to_place:
+            if texture.id in self._items:
+                old_item = self._items.pop(texture.id)
                 self._anim.stop_all(old_item)
                 self._scene.removeItem(old_item)
-                self._current_atlas.remove(tid)
+                self._current_atlas.remove(texture.id)
 
-            gw = texture.grid_width
-            gh = texture.grid_height
+        # 6. 使用 MaxRectsBinPacker 重新排列所有贴图（已有 + 新增）
+        all_rects = []
+        # 已有的贴图
+        for pt in self._current_atlas.placed_textures:
+            all_rects.append(PackRect(
+                id=pt.texture.id,
+                width=pt.texture.display_width,
+                height=pt.texture.display_height,
+            ))
+        # 新增的贴图
+        for texture in textures_to_place:
+            all_rects.append(PackRect(
+                id=texture.id,
+                width=texture.display_width,
+                height=texture.display_height,
+            ))
 
-            pos = self._find_any_free(gw, gh)
-            if pos is None:
-                failed_names.append(texture.name)
-                continue
+        packer = MaxRectsBinPacker(self._current_atlas.size, self._current_atlas.size)
+        results = packer.pack(all_rects)
+        result_map = {r.id: r for r in results}
 
-            pt = PlacedTexture(texture=texture, grid_x=pos[0], grid_y=pos[1])
-            if self._current_atlas.place(pt):
-                self._create_item_for_placed(pt, animate=True)
-                placed_any = True
-            else:
-                failed_names.append(texture.name)
-
-        if placed_any:
-            self.project_changed.emit()
-            self._update_info()
+        # 检查是否所有贴图都被成功放置
+        failed_names = [t.name for t in textures_to_place if t.id not in result_map]
+        # 也检查已有贴图是否被挤出
+        for pt in self._current_atlas.placed_textures:
+            if pt.texture.id not in result_map:
+                failed_names.append(pt.texture.name)
 
         if failed_names:
             count = len(failed_names)
             self._show_toast(f"空间不足，{count} 张贴图无法放置", 3000)
+            return
+
+        # 7. 重新排列已有贴图
+        moves = {}
+        for pt in list(self._current_atlas.placed_textures):
+            r = result_map.get(pt.texture.id)
+            if r:
+                new_gx = r.x // GRID_UNIT
+                new_gy = r.y // GRID_UNIT
+                self._current_atlas._mark_grid(pt, False)
+                pt.grid_x = new_gx
+                pt.grid_y = new_gy
+                self._current_atlas._mark_grid(pt, True)
+
+                item = self._items.get(pt.texture.id)
+                if item:
+                    target = QPointF(r.x, r.y)
+                    item.rest_pos = target
+                    moves[item] = target
+
+        # 8. 放入新贴图
+        for texture in textures_to_place:
+            r = result_map.get(texture.id)
+            if r:
+                new_gx = r.x // GRID_UNIT
+                new_gy = r.y // GRID_UNIT
+                pt = PlacedTexture(texture=texture, grid_x=new_gx, grid_y=new_gy)
+                self._current_atlas.place(pt)
+                self._create_item_for_placed(pt, animate=True)
+
+        # 9. 动画移动已有贴图到新位置
+        if moves:
+            self._auto_layout_running = True
+            self._auto_fill_btn.setEnabled(False)
+
+            def _on_done():
+                self._auto_layout_running = False
+                self._auto_fill_btn.setEnabled(True)
+
+            self._anim.auto_layout_animate(moves, on_finished=_on_done)
+
+        self.project_changed.emit()
+        self._update_info()
 
     def _find_any_free(self, gw, gh):
         atlas = self._current_atlas
@@ -791,6 +876,24 @@ class AtlasEditorView(QWidget):
             self._update_info()
 
         self._anim.fade_remove(item, on_finished=_do_remove)
+
+    def _on_batch_removed(self, texture_ids: list):
+        """批量移除选中贴图（右键菜单触发）"""
+        if not self._current_atlas or not texture_ids:
+            return
+
+        self.before_change.emit("批量移除贴图")
+
+        for tid in texture_ids:
+            item = self._items.pop(tid, None)
+            if item:
+                self._anim.stop_all(item)
+                self._scene.removeItem(item)
+            self._current_atlas.remove(tid)
+
+        self.project_changed.emit()
+        self.after_change.emit("批量移除贴图")
+        self._update_info()
 
     def _on_delete_zone_drop(self, texture_ids: list):
         """删除区拖入处理：从合图中移除贴图"""
