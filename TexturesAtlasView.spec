@@ -67,9 +67,14 @@ a = Analysis(
         'utils',
         'utils.constants',
         'utils.validators',
-        # 第三方隐式依赖
+        # 第三方隐式依赖 — Pillow C 扩展
         'PIL',
         'PIL.Image',
+        'PIL._imaging',
+        'PIL._imagingcms',
+        'PIL._imagingft',
+        'PIL._imagingmath',
+        'PIL._imagingmorph',
         'openpyxl',
         'openpyxl.styles',
         'openpyxl.utils',

@@ -569,6 +569,8 @@ class SettingsDialog(QDialog):
 
         changelog_text = QLabel(
             f"V{APP_VERSION}（2026-03-12）\n"
+            "  · 修复：打包后 PIL._imaging 缺失导致启动崩溃\n\n"
+            "V1.7.3（2026-03-12）\n"
             "  · 测试：更新检测测试版本\n\n"
             "V1.7.2（2026-03-12）\n"
             "  · 改进：更新流程优化，增加保存确认和更新确认步骤\n"
