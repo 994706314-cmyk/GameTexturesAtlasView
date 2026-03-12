@@ -365,6 +365,29 @@ class LibraryPanel(QWidget):
         self._populate_views()
         self._update_count()
 
+    def select_texture_by_id(self, texture_id: str):
+        """根据 texture_id 在当前视图中选中并滚动到对应项"""
+        if self._view_mode == "grid":
+            for i in range(self._grid_list.count()):
+                item = self._grid_list.item(i)
+                if item and item.data(Qt.ItemDataRole.UserRole) == texture_id:
+                    self._grid_list.clearSelection()
+                    item.setSelected(True)
+                    self._grid_list.scrollToItem(
+                        item, QAbstractItemView.ScrollHint.PositionAtCenter
+                    )
+                    return
+        else:
+            for i in range(self._tree_list.topLevelItemCount()):
+                item = self._tree_list.topLevelItem(i)
+                if item and item.data(0, Qt.ItemDataRole.UserRole) == texture_id:
+                    self._tree_list.clearSelection()
+                    item.setSelected(True)
+                    self._tree_list.scrollToItem(
+                        item, QAbstractItemView.ScrollHint.PositionAtCenter
+                    )
+                    return
+
     def _populate_views(self):
         """根据当前排序重新填充双视图，保持滚动位置（批量刷新优化）"""
         # 保存滚动位置
@@ -1190,6 +1213,10 @@ class LibraryPanel(QWidget):
                 if tex and os.path.exists(tex.original_path):
                     self._open_in_explorer(tex.original_path)
         elif action == remove_action:
+            # 从所有合图中也移除这些贴图
+            for atlas in self._project.atlas_list:
+                for tid in ids:
+                    atlas.remove(tid)
             for tid in ids:
                 self._project.remove_texture(tid)
             self.refresh()

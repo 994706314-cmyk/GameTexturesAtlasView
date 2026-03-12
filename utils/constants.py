@@ -216,7 +216,7 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.8.0"  # 多 bug 修复：尺寸/框选移除/拖入空间检测/更新占用
+APP_VERSION = "1.8.1"  # 操作逻辑优化：编辑器→素材库联动、素材库移除同步、智能拖入整理
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"

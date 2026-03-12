@@ -34,6 +34,7 @@ class TextureGraphicsItem(QGraphicsObject):
     batch_removed = Signal(list)  # [texture_id, ...] - 批量移除选中贴图
     move_attempted = Signal(str, int, int, object)
     size_change_requested = Signal(str)  # texture_id - 请求修改规划尺寸
+    clicked = Signal(str)  # texture_id - 点击时通知外部（用于素材库联动选中）
 
     def __init__(self, texture_id: str, name: str,
                  grid_w: int, grid_h: int,
@@ -244,6 +245,7 @@ class TextureGraphicsItem(QGraphicsObject):
             self._drag_start_pos = self.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             self.setZValue(100)
+            self.clicked.emit(self.texture_id)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent):

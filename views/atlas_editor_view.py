@@ -190,6 +190,7 @@ class AtlasEditorView(QWidget):
     before_change = Signal(str)
     after_change = Signal(str)
     atlas_auto_created = Signal(str)  # atlas_id - 自动创建合图时通知外部
+    texture_selected_in_editor = Signal(str)  # texture_id - 编辑器中点击贴图时通知外部
 
     def __init__(self, project: ProjectModel, animation_engine: AnimationEngine, parent=None):
         super().__init__(parent)
@@ -487,6 +488,20 @@ class AtlasEditorView(QWidget):
                 f"利用率: {self._current_atlas.utilization():.1%}"
             )
 
+    def refresh_items(self):
+        """检测并移除已不在合图中的图形项（素材库移除贴图时调用）"""
+        self.refresh()
+        if not self._current_atlas:
+            return
+        placed_ids = {pt.texture.id for pt in self._current_atlas.placed_textures}
+        stale_ids = [tid for tid in self._items if tid not in placed_ids]
+        for tid in stale_ids:
+            item = self._items.pop(tid)
+            self._anim.stop_all(item)
+            self._scene.removeItem(item)
+        if stale_ids:
+            self._update_info()
+
     def _rebuild_items(self):
         for item in self._items.values():
             self._anim.stop_all(item)
@@ -515,6 +530,7 @@ class AtlasEditorView(QWidget):
         item.removed.connect(self._on_item_removed)
         item.batch_removed.connect(self._on_batch_removed)
         item.size_change_requested.connect(self._on_item_size_change)
+        item.clicked.connect(self.texture_selected_in_editor.emit)
 
         self._scene.addItem(item)
         self._items[pt.texture.id] = item
@@ -659,27 +675,131 @@ class AtlasEditorView(QWidget):
         grid_x = max(0, int(scene_pos.x() / GRID_UNIT))
         grid_y = max(0, int(scene_pos.y() / GRID_UNIT))
 
-        pt = PlacedTexture(texture=texture, grid_x=grid_x, grid_y=grid_y)
+        gw = texture.grid_width
+        gh = texture.grid_height
 
-        if not self._current_atlas.can_place(grid_x, grid_y,
-                                              texture.grid_width, texture.grid_height):
-            pos = self._find_nearest_free(grid_x, grid_y, texture.grid_width, texture.grid_height)
-            if pos is None:
-                self._show_toast(f"空间不足，无法放置 {texture.name} ({texture.display_width}x{texture.display_height})")
+        # 策略1: 尝试放在拖入的精确位置
+        if self._current_atlas.can_place(grid_x, grid_y, gw, gh):
+            pt = PlacedTexture(texture=texture, grid_x=grid_x, grid_y=grid_y)
+            self.before_change.emit("放置贴图")
+            if self._current_atlas.place(pt):
+                self._create_item_for_placed(pt, animate=True)
+                self.project_changed.emit()
+                self.after_change.emit("放置贴图")
+                self._update_info()
+                event.acceptProposedAction()
+                return
+
+        # 策略2: 在附近找最近空位
+        pos = self._find_nearest_free(grid_x, grid_y, gw, gh)
+        if pos is not None:
+            pt = PlacedTexture(texture=texture, grid_x=pos[0], grid_y=pos[1])
+            self.before_change.emit("放置贴图")
+            if self._current_atlas.place(pt):
+                self._create_item_for_placed(pt, animate=True)
+                self.project_changed.emit()
+                self.after_change.emit("放置贴图")
+                self._update_info()
+                event.acceptProposedAction()
+                return
+
+        # 策略3: 自动整理后尝试放入（利用零碎空间）
+        # 先检查面积是否够
+        atlas_area = self._current_atlas.size * self._current_atlas.size
+        existing_area = sum(
+            pt.texture.display_width * pt.texture.display_height
+            for pt in self._current_atlas.placed_textures
+        )
+        new_area = texture.display_width * texture.display_height
+        if new_area > atlas_area - existing_area:
+            self._show_toast(
+                f"空间不足，无法放置 {texture.name} "
+                f"({texture.display_width}x{texture.display_height})"
+            )
+            event.ignore()
+            return
+
+        # 面积够但碎片化，尝试用 BinPacker 重排所有贴图
+        all_rects = []
+        for pt in self._current_atlas.placed_textures:
+            all_rects.append(PackRect(
+                id=pt.texture.id,
+                width=pt.texture.display_width,
+                height=pt.texture.display_height,
+            ))
+        all_rects.append(PackRect(
+            id=texture.id,
+            width=texture.display_width,
+            height=texture.display_height,
+        ))
+
+        packer = MaxRectsBinPacker(self._current_atlas.size, self._current_atlas.size)
+        results = packer.pack(all_rects)
+        result_map = {r.id: r for r in results}
+
+        # 检查所有贴图（含新增）是否都能放下
+        if texture.id not in result_map:
+            self._show_toast(
+                f"空间不足，无法放置 {texture.name} "
+                f"({texture.display_width}x{texture.display_height})"
+            )
+            event.ignore()
+            return
+
+        for pt in self._current_atlas.placed_textures:
+            if pt.texture.id not in result_map:
+                self._show_toast(
+                    f"空间不足，无法放置 {texture.name} "
+                    f"({texture.display_width}x{texture.display_height})"
+                )
                 event.ignore()
                 return
-            pt.grid_x, pt.grid_y = pos
 
-        self.before_change.emit("放置贴图")
-        if self._current_atlas.place(pt):
-            self._create_item_for_placed(pt, animate=True)
-            self.project_changed.emit()
-            self.after_change.emit("放置贴图")
-            self._update_info()
-            event.acceptProposedAction()
-        else:
-            self._show_toast(f"空间不足，无法放置 {texture.name}")
-            event.ignore()
+        # 自动整理成功，重新排列所有贴图
+        self.before_change.emit("自动整理放置贴图")
+        moves = {}
+        for pt in list(self._current_atlas.placed_textures):
+            r = result_map.get(pt.texture.id)
+            if r:
+                new_gx = r.x // GRID_UNIT
+                new_gy = r.y // GRID_UNIT
+                self._current_atlas._mark_grid(pt, False)
+                pt.grid_x = new_gx
+                pt.grid_y = new_gy
+                self._current_atlas._mark_grid(pt, True)
+
+                item = self._items.get(pt.texture.id)
+                if item:
+                    target = QPointF(r.x, r.y)
+                    item.rest_pos = target
+                    moves[item] = target
+
+        # 放入新贴图
+        r = result_map[texture.id]
+        new_pt = PlacedTexture(
+            texture=texture,
+            grid_x=r.x // GRID_UNIT,
+            grid_y=r.y // GRID_UNIT,
+        )
+        self._current_atlas.place(new_pt)
+        self._create_item_for_placed(new_pt, animate=True)
+
+        # 动画移动已有贴图到新位置
+        if moves:
+            self._auto_layout_running = True
+            self._auto_fill_btn.setEnabled(False)
+
+            def _on_done():
+                self._auto_layout_running = False
+                self._auto_fill_btn.setEnabled(True)
+
+            self._anim.auto_layout_animate(moves, on_finished=_on_done)
+
+        self.project_changed.emit()
+        self.after_change.emit("自动整理放置贴图")
+        self._update_info()
+        self._show_toast("已自动整理空间并放入", 2000)
+        event.acceptProposedAction()
 
     def _batch_place_textures(self, texture_ids: List[str]):
         """批量放置贴图：先检查总空间 → 自动整理放入 → 空间不足则警告"""

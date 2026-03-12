@@ -367,6 +367,9 @@ class MainWindow(QMainWindow):
         self._editor_view.before_change.connect(self._before_editor_change)
         self._editor_view.after_change.connect(self._after_editor_change)
         self._editor_view.atlas_auto_created.connect(self._on_atlas_auto_created)
+        self._editor_view.texture_selected_in_editor.connect(
+            self._library_panel.select_texture_by_id
+        )
 
         self._library_panel.project_changed.connect(self._on_project_changed)
         self._library_panel.jump_to_atlas.connect(self._on_jump_to_atlas)
@@ -738,8 +741,10 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._update_stats()
         self._outline_panel.refresh()
-        # 避免素材库内部操作触发二次刷新
-        if not getattr(self._library_panel, '_skip_external_refresh', False):
+        # 素材库内部操作时刷新编辑器（可能从合图中移除了贴图）
+        if getattr(self._library_panel, '_skip_external_refresh', False):
+            self._editor_view.refresh_items()
+        else:
             self._library_panel.refresh()
 
     def _update_title(self):
