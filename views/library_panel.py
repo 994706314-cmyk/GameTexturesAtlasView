@@ -1311,18 +1311,86 @@ class LibraryPanel(QWidget):
         title = f"{len(texture_ids)} 张素材" if is_batch else first_tex.name
 
         dlg = SizeEditDialog(
-            title, first_tex.original_size, first_tex.display_size, self
+            title, first_tex.original_size, first_tex.display_size, self,
+            current_tag=first_tex.tag, is_batch=is_batch,
         )
         if dlg.exec() == SizeEditDialog.DialogCode.Accepted:
             new_size = dlg.get_size()
+            new_tag = dlg.get_tag()
+            changed = False
+
             for tid in texture_ids:
                 tex = self._project.find_texture(tid)
-                if tex:
+                if not tex:
+                    continue
+                # 更新尺寸
+                if tex.display_size != new_size:
                     tex.display_size = new_size
-            self.refresh()
-            self._skip_external_refresh = True
-            self.project_changed.emit()
-            self._skip_external_refresh = False
+                    changed = True
+                # 更新标记
+                if dlg.is_tag_changed() and tex.tag != new_tag:
+                    tex.tag = new_tag
+                    changed = True
+
+            # 改名（仅单个素材时）
+            if not is_batch and dlg.is_name_changed():
+                new_name = dlg.get_name()
+                self._rename_texture(first_tex, new_name)
+                changed = True
+
+            if changed:
+                self.refresh()
+                self._skip_external_refresh = True
+                self.project_changed.emit()
+                self._skip_external_refresh = False
+
+    def _rename_texture(self, tex: "TextureItem", new_name: str):
+        """重命名贴图：同步修改 name、缩略图文件名和原图文件名"""
+        old_name = tex.name
+        tex.name = new_name
+
+        # 重命名缩略图缓存文件
+        if tex.thumbnail_path and os.path.exists(tex.thumbnail_path):
+            try:
+                thumb_dir = os.path.dirname(tex.thumbnail_path)
+                thumb_ext = os.path.splitext(tex.thumbnail_path)[1]
+                # 构建新缩略图路径：使用新名称 + 原后缀
+                new_thumb_name = new_name + thumb_ext
+                new_thumb_path = os.path.join(thumb_dir, new_thumb_name)
+                # 如果目标已存在，加个后缀避免冲突
+                if os.path.exists(new_thumb_path) and new_thumb_path != tex.thumbnail_path:
+                    import uuid
+                    new_thumb_name = f"{new_name}_{uuid.uuid4().hex[:6]}{thumb_ext}"
+                    new_thumb_path = os.path.join(thumb_dir, new_thumb_name)
+                os.rename(tex.thumbnail_path, new_thumb_path)
+                tex.thumbnail_path = new_thumb_path
+            except Exception:
+                pass  # 缩略图重命名失败不影响主流程
+
+        # 重命名原图文件（如果原文件存在且不在缓存目录中）
+        if tex.original_path and os.path.exists(tex.original_path):
+            try:
+                import tempfile
+                cache_dir = os.path.normpath(
+                    os.path.join(tempfile.gettempdir(), "tatlas_thumbnails")
+                )
+                orig_dir = os.path.normpath(os.path.dirname(tex.original_path))
+                # 只对非缓存目录中的文件执行重命名
+                if not orig_dir.startswith(cache_dir):
+                    orig_ext = os.path.splitext(tex.original_path)[1]
+                    new_orig_name = new_name + orig_ext
+                    new_orig_path = os.path.join(
+                        os.path.dirname(tex.original_path), new_orig_name
+                    )
+                    if new_orig_path != tex.original_path:
+                        if os.path.exists(new_orig_path):
+                            # 目标已存在，跳过避免覆盖
+                            pass
+                        else:
+                            os.rename(tex.original_path, new_orig_path)
+                            tex.original_path = new_orig_path
+            except Exception:
+                pass  # 原图重命名失败不影响主流程
 
     def _get_selected_texture_ids(self) -> List[str]:
         if self._view_mode == "grid":

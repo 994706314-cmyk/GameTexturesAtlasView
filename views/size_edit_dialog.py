@@ -1,37 +1,82 @@
-"""假分辨率设置对话框"""
+"""假分辨率设置对话框 — 同时支持改名和标记类型"""
+
+import os
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QPushButton, QFrame, QCheckBox,
+    QPushButton, QFrame, QLineEdit,
 )
 from PySide6.QtCore import Qt
 
 from utils.constants import VALID_TEXTURE_SIZES
 
 
+# 标记类型列表
+TAG_OPTIONS = [
+    ("无标记", ""),
+    ("E — 自发光 (Emissive)", "E"),
+    ("A — 半透明 (Alpha)", "A"),
+    ("M — 遮罩 (Mask)", "M"),
+    ("C1 — 自定义1", "C1"),
+    ("C2 — 自定义2", "C2"),
+    ("C3 — 自定义3", "C3"),
+]
+
+
 class SizeEditDialog(QDialog):
-    """设置贴图的假分辨率（仅规划用）"""
+    """设置贴图的假分辨率、名称和标记（仅规划用）"""
 
     def __init__(self, name: str, original_size: tuple,
-                 current_display_size: tuple, parent=None):
+                 current_display_size: tuple, parent=None,
+                 current_tag: str = "", is_batch: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("设置假分辨率")
-        self.setFixedSize(360, 310)
+        self.setWindowTitle("贴图设置")
+        self.setFixedSize(400, 420)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._original_size = original_size
-        self._current_display_size = current_display_size  # 等比缩放基准
+        self._current_display_size = current_display_size
         self._result_size = current_display_size
-        self._init_ui(name, original_size, current_display_size)
+        self._result_name = name  # 改名结果
+        self._result_tag = current_tag  # 标记结果
+        self._original_name = name
+        self._is_batch = is_batch
+        self._name_changed = False  # 标识名字是否被修改
+        self._tag_changed = False  # 标识标记是否被修改
+        self._init_ui(name, original_size, current_display_size, current_tag)
 
-    def _init_ui(self, name, original_size, current_display_size):
+    def _init_ui(self, name, original_size, current_display_size, current_tag):
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel(f"贴图: {name}")
-        title.setStyleSheet("font-size: 14px; font-weight: 600; color: #FFFFFF;")
-        layout.addWidget(title)
+        # ---- 贴图名称 ----
+        name_section_label = QLabel("贴图名称")
+        name_section_label.setStyleSheet("font-size: 11px; color: #888888;")
+        layout.addWidget(name_section_label)
+
+        self._name_edit = QLineEdit(name)
+        self._name_edit.setStyleSheet("""
+            QLineEdit {
+                font-size: 13px; font-weight: 600; color: #FFFFFF;
+                background-color: #2D2D30; border: 1px solid #3C3C3C;
+                border-radius: 4px; padding: 6px 10px;
+            }
+            QLineEdit:focus {
+                border-color: #0078D4;
+            }
+        """)
+        if self._is_batch:
+            self._name_edit.setEnabled(False)
+            self._name_edit.setToolTip("批量编辑时不支持改名")
+            self._name_edit.setStyleSheet("""
+                QLineEdit {
+                    font-size: 13px; font-weight: 600; color: #666666;
+                    background-color: #252526; border: 1px solid #3C3C3C;
+                    border-radius: 4px; padding: 6px 10px;
+                }
+            """)
+        layout.addWidget(self._name_edit)
 
         orig_label = QLabel(
             f"原始尺寸: {original_size[0]} x {original_size[1]} px"
@@ -44,6 +89,32 @@ class SizeEditDialog(QDialog):
         sep.setStyleSheet("background-color: #3C3C3C; max-height: 1px;")
         layout.addWidget(sep)
 
+        # ---- 标记类型 ----
+        tag_row = QHBoxLayout()
+        tag_label = QLabel("标记类型")
+        tag_label.setStyleSheet("font-size: 11px; color: #888888;")
+        tag_row.addWidget(tag_label)
+
+        self._tag_combo = QComboBox()
+        self._tag_combo.setStyleSheet("QComboBox { font-size: 11px; }")
+        for label, val in TAG_OPTIONS:
+            self._tag_combo.addItem(label, val)
+        # 回显当前标记
+        idx = 0
+        for i, (_, val) in enumerate(TAG_OPTIONS):
+            if val == current_tag:
+                idx = i
+                break
+        self._tag_combo.setCurrentIndex(idx)
+        tag_row.addWidget(self._tag_combo, 1)
+        layout.addLayout(tag_row)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("background-color: #3C3C3C; max-height: 1px;")
+        layout.addWidget(sep2)
+
+        # ---- 规划尺寸 ----
         hint = QLabel("设置规划用尺寸（不修改原图，仅用于合图规划）")
         hint.setStyleSheet("font-size: 11px; color: #CCCCCC;")
         hint.setWordWrap(True)
@@ -160,7 +231,34 @@ class SizeEditDialog(QDialog):
         else:
             h = self._height_combo.currentData()
         self._result_size = (w, h)
+
+        # 名称变更检测
+        new_name = self._name_edit.text().strip()
+        if new_name and new_name != self._original_name:
+            self._result_name = new_name
+            self._name_changed = True
+        else:
+            self._result_name = self._original_name
+            self._name_changed = False
+
+        # 标记变更检测
+        new_tag = self._tag_combo.currentData()
+        self._result_tag = new_tag
+        self._tag_changed = True  # 总是记录当前值
+
         self.accept()
 
     def get_size(self) -> tuple:
         return self._result_size
+
+    def get_name(self) -> str:
+        return self._result_name
+
+    def is_name_changed(self) -> bool:
+        return self._name_changed
+
+    def get_tag(self) -> str:
+        return self._result_tag
+
+    def is_tag_changed(self) -> bool:
+        return self._tag_changed

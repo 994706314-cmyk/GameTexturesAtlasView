@@ -32,3 +32,6 @@ AltasToolV1/
 
 # Secrets
 api.txt
+build_err.txt
+build_log.txt
+build_out.txt
