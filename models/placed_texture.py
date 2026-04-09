@@ -32,9 +32,9 @@ class PlacedTexture:
             self.texture.display_height,
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self, full_mode: bool = False) -> dict:
         return {
-            "texture": self.texture.to_dict(),
+            "texture": self.texture.to_dict(full_mode=full_mode),
             "grid_x": self.grid_x,
             "grid_y": self.grid_y,
         }

@@ -66,12 +66,15 @@ class ProjectModel:
                 return t
         return None
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, full_mode: bool = False) -> dict:
+        d = {
             "version": self.version,
-            "atlas_list": [a.to_dict() for a in self.atlas_list],
-            "library": [t.to_dict() for t in self.library],
+            "atlas_list": [a.to_dict(full_mode=full_mode) for a in self.atlas_list],
+            "library": [t.to_dict(full_mode=full_mode) for t in self.library],
         }
+        if full_mode:
+            d["full_mode"] = True
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProjectModel":
@@ -84,3 +87,62 @@ class ProjectModel:
                 TextureItem.from_dict(t) for t in data.get("library", [])
             ],
         )
+
+    def merge_from(self, other: "ProjectModel") -> dict:
+        """将另一个项目的数据合并到当前项目中（追加模式）
+
+        Returns:
+            合并统计信息字典 {"textures_added", "textures_skipped", "atlases_added"}
+        """
+        import uuid
+
+        stats = {"textures_added": 0, "textures_skipped": 0, "atlases_added": 0}
+
+        # 构建当前素材的名称+尺寸集合，用于去重判断
+        existing_keys = set()
+        for tex in self.library:
+            key = (tex.name, tex.display_size[0], tex.display_size[1])
+            existing_keys.add(key)
+
+        # 构建 id 映射表（旧 id → 新 id），用于合图中贴图引用更新
+        id_map = {}
+
+        for tex in other.library:
+            key = (tex.name, tex.display_size[0], tex.display_size[1])
+            if key in existing_keys:
+                stats["textures_skipped"] += 1
+                # 即使跳过，也记录映射（找到已有的同名贴图 id）
+                for existing_tex in self.library:
+                    if (existing_tex.name, existing_tex.display_size[0],
+                            existing_tex.display_size[1]) == key:
+                        id_map[tex.id] = existing_tex.id
+                        break
+                continue
+
+            # 生成新 id 避免冲突
+            old_id = tex.id
+            tex.id = str(uuid.uuid4())
+            id_map[old_id] = tex.id
+            self.library.append(tex)
+            existing_keys.add(key)
+            stats["textures_added"] += 1
+
+        # 追加合图
+        for atlas in other.atlas_list:
+            atlas.id = str(uuid.uuid4())
+            # 更新合图内贴图引用
+            for pt in atlas.placed_textures:
+                old_tex_id = pt.texture.id
+                if old_tex_id in id_map:
+                    pt.texture.id = id_map[old_tex_id]
+                    # 尝试找到本项目中的贴图引用
+                    local_tex = self.find_texture(id_map[old_tex_id])
+                    if local_tex:
+                        pt.texture = local_tex
+            self.atlas_list.append(atlas)
+            stats["atlases_added"] += 1
+
+        if stats["textures_added"] > 0 or stats["atlases_added"] > 0:
+            self._dirty = True
+
+        return stats

@@ -116,12 +116,12 @@ class AtlasModel:
                 return pt
         return None
 
-    def to_dict(self) -> dict:
+    def to_dict(self, full_mode: bool = False) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "size": self.size,
-            "placed_textures": [pt.to_dict() for pt in self.placed_textures],
+            "placed_textures": [pt.to_dict(full_mode=full_mode) for pt in self.placed_textures],
         }
 
     @classmethod

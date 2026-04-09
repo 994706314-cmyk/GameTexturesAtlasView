@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QProgressDialog,
 )
 from PySide6.QtCore import Qt, QMargins, QSettings, QByteArray, QThread, Signal, QObject
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut, QScreen
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut, QScreen, QDragEnterEvent, QDropEvent
 
 from models.project_model import ProjectModel
 from models.atlas_model import AtlasModel
@@ -26,6 +26,7 @@ from utils.constants import (
     REVERSE_COLOR_PRIMARY_PRESSED,
     REVERSE_FILE_FILTER, REVERSE_FILE_EXTENSION, REVERSE_MODE_VERSION,
     GITHUB_OWNER, GITHUB_REPO, APP_VERSION,
+    PROJECT_FILE_EXTENSION,
 )
 from services.animation_engine import AnimationEngine
 from services.bin_packer import MaxRectsBinPacker, PackRect
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 800)
         self.resize(1920, 1080)
         self.setStyleSheet("QMainWindow { background-color: #1A1A1A; }")
+        self.setAcceptDrops(True)  # 支持拖入存档文件打开
 
         self._init_menu_bar()
         self._init_ui()
@@ -132,6 +134,17 @@ class MainWindow(QMainWindow):
         self._save_as_action = QAction("另存为(&A)", self)
         self._save_as_action.triggered.connect(self._on_save_as)
         file_menu.addAction(self._save_as_action)
+
+        self._save_full_action = QAction("全量保存(含原图)(&U)", self)
+        self._save_full_action.triggered.connect(self._on_save_full)
+        file_menu.addAction(self._save_full_action)
+
+        file_menu.addSeparator()
+
+        self._append_action = QAction("追加存档(&P)", self)
+        self._append_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._append_action.triggered.connect(self._on_append)
+        file_menu.addAction(self._append_action)
 
         file_menu.addSeparator()
 
@@ -780,6 +793,7 @@ class MainWindow(QMainWindow):
         atlas = self._project.find_atlas(atlas_id)
         if atlas:
             self._editor_view.set_atlas(atlas)
+            self._update_stats()  # 切换合图时更新统计
 
     def _on_project_changed(self):
         self._project.mark_dirty()
@@ -800,9 +814,21 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"TexturesAtlasView V{APP_VERSION} - {name}{dirty}")
 
     def _update_stats(self):
+        # 计算各尺寸的贴图数量统计（按单张合图分别统计）
+        size_stats = {}
+        current_atlas = getattr(self._editor_view, '_current_atlas', None)
+        if current_atlas and current_atlas.placed_textures:
+            from collections import Counter
+            size_counter = Counter()
+            for pt in current_atlas.placed_textures:
+                size_key = f"{pt.texture.display_width}x{pt.texture.display_height}"
+                size_counter[size_key] += 1
+            size_stats = dict(size_counter)
+
         self._toolbar.update_stats(
             len(self._project.atlas_list),
             len(self._project.library),
+            size_stats,
         )
 
     def _check_save(self) -> bool:
@@ -896,6 +922,141 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", f"无法保存项目:\n{e}")
             return False
+
+    def _on_save_full(self) -> bool:
+        """全量保存：嵌入原图数据，方便他人导入"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "全量保存（含原图）", "", PROJECT_FILE_FILTER
+        )
+        if not path:
+            return False
+        if not path.endswith(PROJECT_FILE_EXTENSION):
+            path += PROJECT_FILE_EXTENSION
+        try:
+            data = self._project.to_dict(full_mode=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._add_recent_file(path)
+            self.statusBar().showMessage(
+                f"✅ 全量保存完成: {os.path.basename(path)}（含原图数据）", 5000
+            )
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"全量保存失败:\n{e}")
+            return False
+
+    def _on_append(self):
+        """追加存档：不关闭当前项目，将另一个 .tatlas 存档合并进来"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "追加存档", "", PROJECT_FILE_FILTER
+        )
+        if not path:
+            return
+        self._append_project(path)
+
+    def _append_project(self, path: str):
+        """执行追加合并逻辑"""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            other = ProjectModel.from_dict(data)
+
+            # 记录当前状态用于撤销
+            self._editor_view.before_change.emit("追加存档")
+
+            stats = self._project.merge_from(other)
+
+            # 刷新所有面板
+            self._outline_panel.set_project(self._project)
+            self._editor_view.set_project(self._project)
+            self._library_panel.set_project(self._project)
+
+            if self._project.atlas_list:
+                last = self._project.atlas_list[-1]
+                self._outline_panel.select_atlas(last.id)
+                self._editor_view.set_atlas(last)
+
+            self._editor_view.after_change.emit("追加存档")
+            self._on_project_changed()
+
+            # 提示合并结果
+            msg = f"追加完成！来自: {os.path.basename(path)}\n\n"
+            msg += f"新增素材: {stats['textures_added']} 张\n"
+            msg += f"跳过重复: {stats['textures_skipped']} 张\n"
+            msg += f"新增合图: {stats['atlases_added']} 张"
+            QMessageBox.information(self, "追加存档", msg)
+
+        except Exception as e:
+            QMessageBox.critical(self, "追加失败", f"无法追加存档:\n{e}")
+
+    # ---- Drag & Drop (.tatlas file) ----
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """主窗口拖入事件：接受 .tatlas 文件"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                local_path = url.toLocalFile()
+                if local_path and local_path.lower().endswith(PROJECT_FILE_EXTENSION):
+                    event.acceptProposedAction()
+                    return
+        # 不拦截其他拖放（让子组件处理图片拖入等）
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """主窗口拖入放下：打开或追加 .tatlas 文件"""
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        tatlas_paths = []
+        for url in event.mimeData().urls():
+            local_path = url.toLocalFile()
+            if local_path and local_path.lower().endswith(PROJECT_FILE_EXTENSION):
+                tatlas_paths.append(local_path)
+
+        if not tatlas_paths:
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+
+        if self._current_mode != "plan":
+            self._switch_to_plan_mode()
+
+        # 如果当前项目是空的，直接打开第一个文件
+        if not self._project.library and not self._project.atlas_list:
+            self._load_project(tatlas_paths[0])
+            # 剩余文件追加
+            for extra_path in tatlas_paths[1:]:
+                self._append_project(extra_path)
+        else:
+            # 询问用户是打开还是追加
+            if len(tatlas_paths) == 1:
+                ret = QMessageBox.question(
+                    self, "拖入存档",
+                    f"检测到拖入文件: {os.path.basename(tatlas_paths[0])}\n\n"
+                    f"• 「打开」- 关闭当前项目并打开此存档\n"
+                    f"• 「追加」- 将此存档内容合并到当前项目",
+                    QMessageBox.StandardButton.Open |
+                    QMessageBox.StandardButton.Apply |
+                    QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Apply,
+                )
+                if ret == QMessageBox.StandardButton.Open:
+                    if self._check_save():
+                        self._load_project(tatlas_paths[0])
+                elif ret == QMessageBox.StandardButton.Apply:
+                    self._append_project(tatlas_paths[0])
+            else:
+                # 多个文件，全部追加
+                ret = QMessageBox.question(
+                    self, "拖入多个存档",
+                    f"检测到拖入 {len(tatlas_paths)} 个存档文件，将全部追加到当前项目。\n\n确定继续？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if ret == QMessageBox.StandardButton.Yes:
+                    for p in tatlas_paths:
+                        self._append_project(p)
 
     # ---- Recent Files ----
     MAX_RECENT_FILES = 10

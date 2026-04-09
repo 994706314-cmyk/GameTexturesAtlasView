@@ -43,6 +43,12 @@ class ToolbarWidget(QWidget):
         self._stats_label.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
         c_layout.addWidget(self._stats_label)
 
+        # 尺寸统计标签（当前选中合图的各尺寸贴图数量）
+        self._size_stats_label = QLabel("")
+        self._size_stats_label.setStyleSheet("color: #6A9FD8; font-size: 11px; background: transparent;")
+        self._size_stats_label.setToolTip("当前选中合图内各尺寸贴图数量统计")
+        c_layout.addWidget(self._size_stats_label)
+
         # 导出进度条（默认隐藏）
         self._export_progress = QProgressBar()
         self._export_progress.setFixedWidth(200)
@@ -131,8 +137,24 @@ class ToolbarWidget(QWidget):
         elif action == full_action:
             self.export_excel_clicked.emit(True)
 
-    def update_stats(self, atlas_count: int, texture_count: int):
+    def update_stats(self, atlas_count: int, texture_count: int, size_stats: dict = None):
         self._stats_label.setText(f"合图图集: {atlas_count} | 素材: {texture_count}")
+
+        # 更新尺寸统计
+        if size_stats:
+            # 按面积排序（大的在前）
+            def _parse_size(key):
+                parts = key.split("x")
+                return int(parts[0]) * int(parts[1])
+            sorted_items = sorted(size_stats.items(), key=lambda kv: _parse_size(kv[0]), reverse=True)
+            parts = [f"{k}: {v}张" for k, v in sorted_items]
+            total = sum(size_stats.values())
+            stats_text = f"📊 当前合图: {total}张 | " + "  ".join(parts)
+            self._size_stats_label.setText(stats_text)
+            self._size_stats_label.setVisible(True)
+        else:
+            self._size_stats_label.setText("")
+            self._size_stats_label.setVisible(False)
 
     # ---- 导出进度条控制 ----
     def set_export_progress(self, current: int, total: int):
