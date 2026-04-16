@@ -187,6 +187,11 @@ EXACT_SIMILARITY_THRESHOLD = 0.99   # 精确判定：SSIM >= 99% 判为一致
 FUZZY_SIMILARITY_THRESHOLD = 0.85   # 模糊判定：SSIM >= 85% 判为雷同
 PHASH_PRE_FILTER_THRESHOLD = 24     # pHash 粗筛阈值：汉明距离 <= 此值才进入 SSIM 精确验证
 
+# 明度查重比率（感知哈希近似匹配）
+# 值域 0~100，表示允许的最大差异百分比。越大越容易判为相似。
+# 默认 20 表示两张图片的感知哈希差异不超过 20% 即视为近似重复。
+DEFAULT_PERCEPTUAL_THRESHOLD = 20   # 默认明度查重比率（%）
+
 
 # 检查模式 - 标记颜色调色板（20色循环）
 DUPLICATE_MARK_COLORS = [
@@ -216,7 +221,7 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.9.5"
+APP_VERSION = "1.9.6"
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"

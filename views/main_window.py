@@ -27,6 +27,7 @@ from utils.constants import (
     REVERSE_FILE_FILTER, REVERSE_FILE_EXTENSION, REVERSE_MODE_VERSION,
     GITHUB_OWNER, GITHUB_REPO, APP_VERSION,
     PROJECT_FILE_EXTENSION,
+    DEFAULT_PERCEPTUAL_THRESHOLD,
 )
 from services.animation_engine import AnimationEngine
 from services.bin_packer import MaxRectsBinPacker, PackRect
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
             "atlas_suffix": DEFAULT_ATLAS_SUFFIX,
             "fuzzy_threshold": DEFAULT_FUZZY_THRESHOLD,
             "min_tier_size": DEFAULT_MIN_TIER_SIZE,
+            "perceptual_threshold": DEFAULT_PERCEPTUAL_THRESHOLD,
         }
         self._shortcuts = {}
         self._current_mode = "plan"  # "plan" 或 "reverse"
@@ -1500,7 +1502,12 @@ class MainWindow(QMainWindow):
 
         # 创建后台线程
         min_tier = self._settings.get("min_tier_size", DEFAULT_MIN_TIER_SIZE)
-        self._analysis_worker = _AnalysisWorker(atlases, "exact", min_tier_size=min_tier)
+        perceptual = self._settings.get("perceptual_threshold", DEFAULT_PERCEPTUAL_THRESHOLD)
+        self._analysis_worker = _AnalysisWorker(
+            atlases, "exact",
+            min_tier_size=min_tier,
+            perceptual_threshold=perceptual,
+        )
         self._analysis_thread = QThread()
         self._analysis_worker.moveToThread(self._analysis_thread)
 
@@ -1924,11 +1931,12 @@ class _AnalysisWorker(QObject):
     finished = Signal(object)          # DuplicateResult or None (if cancelled)
     error = Signal(str)                # error message
 
-    def __init__(self, atlases, mode, min_tier_size=64, parent=None):
+    def __init__(self, atlases, mode, min_tier_size=64, perceptual_threshold=0, parent=None):
         super().__init__(parent)
         self._atlases = atlases
         self._mode = mode
         self._min_tier_size = min_tier_size
+        self._perceptual_threshold = perceptual_threshold
         self._cancelled = False
 
     def cancel(self):
@@ -1949,6 +1957,7 @@ class _AnalysisWorker(QObject):
                 atlases=self._atlases,
                 mode=self._mode,
                 min_tier_size=self._min_tier_size,
+                perceptual_threshold=self._perceptual_threshold,
                 progress_callback=_progress_cb,
                 cancel_check=_cancel_check,
             )

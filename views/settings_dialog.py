@@ -17,6 +17,7 @@ from utils.constants import (
     DEFAULT_ATLAS_SUFFIX, DEFAULT_FUZZY_THRESHOLD, APP_VERSION,
     DEFAULT_MIN_TIER_SIZE, REVERSE_COLOR_PRIMARY,
     GITHUB_OWNER, GITHUB_REPO,
+    DEFAULT_PERCEPTUAL_THRESHOLD,
 )
 
 import os as _os
@@ -347,30 +348,31 @@ class SettingsDialog(QDialog):
         sf_layout.addWidget(self._atlas_suffix_input)
         rv_layout.addWidget(suffix_group)
 
-        # 模糊判定阈值
-        fuzzy_group = QGroupBox("模糊判定参数")
-        fuzzy_group.setStyleSheet("QGroupBox { font-size: 11px; }")
-        fz_layout = QVBoxLayout(fuzzy_group)
-        fz_hint = QLabel(
-            "感知哈希(pHash)汉明距离阈值，值越大越容易判定为相似。\n"
-            "推荐范围: 5-12，默认为 8"
+        # 明度查重比率（感知哈希近似匹配）
+        perceptual_group = QGroupBox("明度查重比率")
+        perceptual_group.setStyleSheet("QGroupBox { font-size: 11px; }")
+        pt_layout = QVBoxLayout(perceptual_group)
+        pt_hint = QLabel(
+            "启用后可识别内容相同但明度/颜色略有差异的图集块。\n"
+            "比率越高越容易判定为相似，0 = 关闭明度查重。\n"
+            "推荐范围: 10~30%，默认 20%"
         )
-        fz_hint.setStyleSheet("font-size: 10px;")
-        fz_hint.setProperty("class", "subtext")
-        fz_hint.setWordWrap(True)
-        fz_layout.addWidget(fz_hint)
+        pt_hint.setStyleSheet("font-size: 10px;")
+        pt_hint.setProperty("class", "subtext")
+        pt_hint.setWordWrap(True)
+        pt_layout.addWidget(pt_hint)
 
-        fz_row = QHBoxLayout()
-        self._fuzzy_threshold_spin = QSpinBox()
-        self._fuzzy_threshold_spin.setRange(1, 32)
-        self._fuzzy_threshold_spin.setValue(
-            self._settings.get("fuzzy_threshold", DEFAULT_FUZZY_THRESHOLD)
+        pt_row = QHBoxLayout()
+        self._perceptual_threshold_spin = QSpinBox()
+        self._perceptual_threshold_spin.setRange(0, 100)
+        self._perceptual_threshold_spin.setValue(
+            self._settings.get("perceptual_threshold", DEFAULT_PERCEPTUAL_THRESHOLD)
         )
-        # SpinBox 样式由全局 QSS 控制
-        fz_row.addWidget(self._fuzzy_threshold_spin)
-        fz_row.addStretch()
-        fz_layout.addLayout(fz_row)
-        rv_layout.addWidget(fuzzy_group)
+        self._perceptual_threshold_spin.setSuffix(" %")
+        pt_row.addWidget(self._perceptual_threshold_spin)
+        pt_row.addStretch()
+        pt_layout.addLayout(pt_row)
+        rv_layout.addWidget(perceptual_group)
 
         # 最低检测档位
         tier_group = QGroupBox("重复检测最低档位")
@@ -568,7 +570,11 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(changelog_title)
 
         changelog_text = QLabel(
-            f"V{APP_VERSION}（2026-04-09）\n"
+            f"V{APP_VERSION}（2026-04-16）\n"
+            "  · 新增：明度查重功能（感知哈希近似匹配），可识别内容相同但明度不同的图集块\n"
+            "  · 新增：设置中可调整明度查重比率（默认20%），0%=关闭\n"
+            "  · 修复：缩略图缓存未跟随文件内容变化而更新的问题\n\n"
+            "V1.9.5（2026-04-09）\n"
             "  · 新增：设置假分辨率对话框支持修改贴图名称（同步更新缩略图和源文件名）\n"
             "  · 新增：设置假分辨率对话框集成标记类型设置\n"
             "  · 改进：更新日志仅保留最近3个版本记录\n\n"
@@ -576,10 +582,7 @@ class SettingsDialog(QDialog):
             "  · 新增：文件菜单「追加存档」功能，不关闭当前项目合并其他人的存档\n"
             "  · 新增：文件菜单「全量保存(含原图)」，存档嵌入原图数据方便分享\n"
             "  · 新增：拖入 .tatlas 存档文件可直接打开或追加\n"
-            "  · 新增：底部工具栏显示当前合图各尺寸贴图数量统计\n\n"
-            "V1.9.3（2026-03-12）\n"
-            "  · 规划模式：素材库列表视图合图列显示标记角标和图标样式序号\n"
-            "  · 规划模式：合图序号采用蓝色圆角矩形图标样式"
+            "  · 新增：底部工具栏显示当前合图各尺寸贴图数量统计"
         )
         changelog_text.setWordWrap(True)
         changelog_text.setStyleSheet(
@@ -679,7 +682,8 @@ class SettingsDialog(QDialog):
             "thumbnail_quality": self._thumb_quality_combo.currentData(),
             "smooth_mode": self._smooth_mode_check.isChecked(),
             "atlas_suffix": self._atlas_suffix_input.text().strip() or DEFAULT_ATLAS_SUFFIX,
-            "fuzzy_threshold": self._fuzzy_threshold_spin.value(),
+            "fuzzy_threshold": DEFAULT_FUZZY_THRESHOLD,  # 保留兼容
+            "perceptual_threshold": self._perceptual_threshold_spin.value(),
             "min_tier_size": self._min_tier_combo.currentData(),
         }
         self._settings.update(result)
@@ -734,7 +738,7 @@ class SettingsDialog(QDialog):
 
         # 检查模式
         self._atlas_suffix_input.setText(DEFAULT_ATLAS_SUFFIX)
-        self._fuzzy_threshold_spin.setValue(DEFAULT_FUZZY_THRESHOLD)
+        self._perceptual_threshold_spin.setValue(DEFAULT_PERCEPTUAL_THRESHOLD)
         idx = self._min_tier_combo.findData(DEFAULT_MIN_TIER_SIZE)
         if idx >= 0:
             self._min_tier_combo.setCurrentIndex(idx)

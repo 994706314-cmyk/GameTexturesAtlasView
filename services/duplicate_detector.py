@@ -7,6 +7,7 @@
 - 哈希相同的跨图集块即为重复（O(N) 而非 O(N²)）
 - 已识别为重复的区域不再参与后续更小尺寸的检测
 - 仅比较不同图集之间的块，同一图集内不比较
+- 支持明度查重（感知哈希近似匹配）：对 MD5 不同但 pHash 相近的块标记为近似重复
 """
 
 import hashlib
@@ -16,6 +17,7 @@ from typing import List, Optional, Callable, Dict, Tuple, Set
 
 import numpy as np
 from PIL import Image
+import imagehash
 
 from models.reverse_atlas_item import SubRegion, ReverseAtlasItem
 from models.duplicate_result import DuplicateResult
@@ -62,7 +64,7 @@ class _AtlasImage:
 
 class _GridBlock:
     """一个网格块的引用"""
-    __slots__ = ('atlas_idx', 'x', 'y', 'size', 'atlas_id')
+    __slots__ = ('atlas_idx', 'x', 'y', 'size', 'atlas_id', 'phash')
 
     def __init__(self, atlas_idx: int, x: int, y: int, size: int, atlas_id: str):
         self.atlas_idx = atlas_idx
@@ -70,6 +72,30 @@ class _GridBlock:
         self.y = y
         self.size = size
         self.atlas_id = atlas_id
+        self.phash = None  # 感知哈希，延迟计算
+
+
+def _compute_block_phash(img_data: np.ndarray, x: int, y: int, size: int):
+    """计算网格块的感知哈希 (pHash)
+
+    将块裁切为 PIL Image 后通过 imagehash.phash 生成感知哈希。
+    返回 imagehash.ImageHash 对象，支持直接做减法得到汉明距离。
+    如果块内有效像素不足则返回 None。
+    """
+    block = img_data[y:y + size, x:x + size]
+    total_pixels = size * size
+
+    # 有效性检查
+    alpha = block[:, :, 3]
+    opaque_mask = alpha > 10
+    opaque_count = np.count_nonzero(opaque_mask)
+    if opaque_count < total_pixels * MIN_VALID_PIXEL_RATIO:
+        return None
+
+    # 转为 PIL Image（只取 RGB）用于 phash
+    rgb_block = block[:, :, :3]
+    pil_block = Image.fromarray(rgb_block, mode='RGB')
+    return imagehash.phash(pil_block, hash_size=16)
 
 
 def _block_has_content(img_data: np.ndarray, x: int, y: int, size: int) -> bool:
@@ -153,6 +179,7 @@ class DuplicateDetector:
         mode: str = "exact",
         fuzzy_threshold: int = 0,
         min_tier_size: int = 64,
+        perceptual_threshold: int = 0,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> DuplicateResult:
@@ -163,6 +190,8 @@ class DuplicateDetector:
         2. 对每个块计算内容哈希（量化后的有效像素 MD5）
         3. 哈希相同且来自不同图集的块即为重复
         4. 已识别为重复的区域标记 occupied，不再参与后续检测
+        5. 若 perceptual_threshold > 0，则在精确匹配后对剩余块进行
+           感知哈希(pHash)近似匹配，识别明度/颜色偏移的近似重复
 
         复杂度从 O(N²) 降至 O(N)，速度提升数十到数百倍。
 
@@ -171,6 +200,7 @@ class DuplicateDetector:
             mode: 仅 "exact" 有效
             fuzzy_threshold: 已废弃
             min_tier_size: 最低检测档位（默认 64）
+            perceptual_threshold: 明度查重比率（0~100%），0=不启用
             progress_callback: 进度回调 (current, total, message)
             cancel_check: 取消检查
 
@@ -374,7 +404,132 @@ class DuplicateDetector:
 
         # ---- 构建结果（含组间去重合并）----
         if progress_callback:
-            progress_callback(98, 100, "构建分析结果...")
+            progress_callback(95, 100, "构建分析结果...")
+
+        # ==== 感知哈希近似匹配（明度查重） ====
+        perceptual_groups = []
+        if perceptual_threshold > 0:
+            if progress_callback:
+                progress_callback(90, 100, "正在进行明度查重（感知哈希匹配）...")
+
+            # 将百分比阈值转换为汉明距离阈值
+            # pHash hash_size=16 → 256 bit → 最大汉明距离 256
+            max_hamming = int(256 * perceptual_threshold / 100)
+
+            # 收集所有未被精确匹配占用的有效块及其 pHash
+            unmatched_blocks: List[_GridBlock] = []
+            for tier_size in active_tiers:
+                if cancel_check and cancel_check():
+                    return result
+
+                for atlas_idx, img in valid_images:
+                    cols = img.width // tier_size
+                    rows = img.height // tier_size
+
+                    for row_i in range(rows):
+                        for col_i in range(cols):
+                            x = col_i * tier_size
+                            y = row_i * tier_size
+
+                            # 跳过已被精确匹配占用的
+                            occ_block = occupied[atlas_idx][y:y + tier_size, x:x + tier_size]
+                            if np.count_nonzero(occ_block) > tier_size * tier_size * 0.5:
+                                continue
+
+                            if not _block_has_content(img.rgba_array, x, y, tier_size):
+                                continue
+
+                            block = _GridBlock(
+                                atlas_idx=atlas_idx,
+                                x=x, y=y,
+                                size=tier_size,
+                                atlas_id=img.atlas.id,
+                            )
+                            # 计算感知哈希
+                            ph = _compute_block_phash(img.rgba_array, x, y, tier_size)
+                            if ph is not None:
+                                block.phash = ph
+                                unmatched_blocks.append(block)
+
+            if progress_callback:
+                progress_callback(92, 100,
+                    f"明度查重：对 {len(unmatched_blocks)} 个未匹配块进行感知哈希比较...")
+
+            # 按 tier_size 分组比较（同尺寸才能比较）
+            by_tier: Dict[int, List[_GridBlock]] = defaultdict(list)
+            for blk in unmatched_blocks:
+                by_tier[blk.size].append(blk)
+
+            for tier_size, tier_blocks in by_tier.items():
+                if cancel_check and cancel_check():
+                    return result
+                if len(tier_blocks) < 2:
+                    continue
+
+                # 简单两两比较（已占用的块已被过滤，数量不会太多）
+                used = set()
+                for i in range(len(tier_blocks)):
+                    if i in used:
+                        continue
+                    group_members = [tier_blocks[i]]
+                    group_atlas_set = {tier_blocks[i].atlas_idx}
+
+                    for j in range(i + 1, len(tier_blocks)):
+                        if j in used:
+                            continue
+                        # 同图集内不比较
+                        if tier_blocks[j].atlas_idx == tier_blocks[i].atlas_idx:
+                            # 允许同图集的块加入组（但组中必须有跨图集的）
+                            pass
+
+                        dist = tier_blocks[i].phash - tier_blocks[j].phash
+                        if dist <= max_hamming and dist > 0:
+                            # 确保是不同图集
+                            if tier_blocks[j].atlas_idx != tier_blocks[i].atlas_idx:
+                                group_members.append(tier_blocks[j])
+                                group_atlas_set.add(tier_blocks[j].atlas_idx)
+                                used.add(j)
+
+                    # 至少来自 2 个不同图集
+                    if len(group_atlas_set) >= 2 and len(group_members) >= 2:
+                        used.add(i)
+                        # 计算组内最大汉明距离
+                        max_dist_in_group = 0
+                        for mi in range(len(group_members)):
+                            for mj in range(mi + 1, len(group_members)):
+                                d = group_members[mi].phash - group_members[mj].phash
+                                if d > max_dist_in_group:
+                                    max_dist_in_group = d
+
+                        # 标记占用
+                        for blk in group_members:
+                            occupied[blk.atlas_idx][blk.y:blk.y + blk.size, blk.x:blk.x + blk.size] = True
+
+                        # 创建 SubRegion
+                        regions = []
+                        atlas_list_for_group = []
+                        for blk in group_members:
+                            region = SubRegion(
+                                x=blk.x, y=blk.y,
+                                width=blk.size, height=blk.size,
+                                atlas_id=blk.atlas_id,
+                            )
+                            regions.append(region)
+                            atlas_list_for_group.append(atlas_images[blk.atlas_idx].atlas)
+
+                        perceptual_groups.append({
+                            'tier_size': tier_size,
+                            'regions': regions,
+                            'atlases': atlas_list_for_group,
+                            'hamming_distance': max_dist_in_group,
+                        })
+
+            if progress_callback:
+                progress_callback(95, 100,
+                    f"明度查重完成，发现 {len(perceptual_groups)} 组近似重复")
+
+        if progress_callback:
+            progress_callback(96, 100, "合并分析结果...")
 
         # 先清空所有图集的 sub_regions（检测器统一管理）
         for atlas in atlases:
@@ -421,6 +576,26 @@ class DuplicateDetector:
                 atlas_ids=atlas_ids,
                 match_type="exact",
                 hamming_distance=0,
+                tier_size=group_info['tier_size'],
+            )
+
+        # 添加感知哈希近似匹配组
+        for group_info in perceptual_groups:
+            regions = group_info['regions']
+            atlases_for_group = group_info['atlases']
+
+            region_ids = []
+            atlas_ids = []
+            for region, atlas in zip(regions, atlases_for_group):
+                atlas_regions[atlas.id].append(region)
+                region_ids.append(region.region_id)
+                atlas_ids.append(atlas.id)
+
+            result.add_group(
+                region_ids=region_ids,
+                atlas_ids=atlas_ids,
+                match_type="fuzzy",
+                hamming_distance=group_info.get('hamming_distance', 0),
                 tier_size=group_info['tier_size'],
             )
 

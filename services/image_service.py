@@ -26,11 +26,17 @@ class ImageService:
 
     @classmethod
     def generate_thumbnail(cls, image_path: str, size: int = THUMBNAIL_SIZE) -> Optional[str]:
-        """生成缩略图并缓存到临时目录，返回缩略图路径"""
+        """生成缩略图并缓存到临时目录，返回缩略图路径
+
+        缓存 key 包含文件路径 + 文件修改时间，确保文件内容变化后缓存自动失效。
+        """
         if not os.path.exists(image_path):
             return None
 
-        path_hash = hashlib.md5(image_path.encode()).hexdigest()
+        # 将文件修改时间纳入缓存key，文件内容变更后缓存自动失效
+        mtime = os.path.getmtime(image_path)
+        cache_key = f"{image_path}|{mtime}"
+        path_hash = hashlib.md5(cache_key.encode()).hexdigest()
         thumb_path = os.path.join(cls.get_cache_dir(), f"{path_hash}_{size}.png")
 
         if os.path.exists(thumb_path):

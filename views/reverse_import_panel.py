@@ -590,6 +590,19 @@ class _ResultGroupWidget(QWidget):
         """)
         header_layout.addWidget(group_label)
 
+        # 匹配类型标签
+        if self._group.match_type == "fuzzy":
+            type_label = QLabel("近似")
+            type_label.setStyleSheet("""
+                color: #FFFFFF; font-weight: 600;
+                font-size: 9px; background: #FF9800;
+                padding: 1px 5px; border-radius: 3px;
+            """)
+            type_label.setToolTip(
+                f"明度查重匹配（感知哈希差异 {self._group.hamming_distance}）"
+            )
+            header_layout.addWidget(type_label)
+
         # 区域尺寸标签（从第一个有效 region 获取）
         size_text = ""
         for rid in self._group.region_ids:
