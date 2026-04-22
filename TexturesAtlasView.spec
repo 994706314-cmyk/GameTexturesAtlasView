@@ -99,7 +99,7 @@ a = Analysis(
         # 'unittest',  # imagehash 依赖 unittest.mock，不能排除
         'xmlrpc',
         'lib2to3',
-        'pydoc',
+        # 'pydoc',  # imagehash 依赖链需要 pydoc，不能排除
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
