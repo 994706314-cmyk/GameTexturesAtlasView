@@ -96,7 +96,7 @@ a = Analysis(
         'tkinter',
         'matplotlib',
         'test',
-        'unittest',
+        # 'unittest',  # imagehash 依赖 unittest.mock，不能排除
         'xmlrpc',
         'lib2to3',
         'pydoc',
