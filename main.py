@@ -57,6 +57,13 @@ def main():
     window = MainWindow()
     window.show()
 
+    # 命令行参数：双击存档文件打开
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        if os.path.isfile(file_path):
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(300, lambda: window.open_file_from_args(file_path))
+
     sys.exit(app.exec())
 
 

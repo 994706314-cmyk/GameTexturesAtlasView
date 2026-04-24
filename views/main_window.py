@@ -202,6 +202,10 @@ class MainWindow(QMainWindow):
         self._clear_screenshot_action.triggered.connect(self._on_clear_screenshot_cache)
         settings_menu.addAction(self._clear_screenshot_action)
 
+        self._register_assoc_action = QAction("注册文件关联(.tatlas/.tcheck)...", self)
+        self._register_assoc_action.triggered.connect(self._on_register_file_association)
+        settings_menu.addAction(self._register_assoc_action)
+
         # 将检查模式文件菜单插入到设置菜单之前，保证显示顺序为：文件 | 设置
         menu_bar.insertMenu(self._settings_menu.menuAction(), self._reverse_file_menu)
 
@@ -859,6 +863,80 @@ class MainWindow(QMainWindow):
                 f"在所选目录中未找到匹配的文件。\n共有 {len(missing_textures)} 个文件缺失。"
             )
 
+    # ---- File Association (Windows) ----
+    def _on_register_file_association(self):
+        """注册 .tatlas 和 .tcheck 文件关联（写入当前用户注册表，需管理员权限写 HKCR 则用 HKCU）"""
+        import platform
+        if platform.system() != "Windows":
+            QMessageBox.information(self, "文件关联", "文件关联注册仅支持 Windows 系统。")
+            return
+
+        import sys
+        import subprocess
+
+        # 获取 EXE 路径
+        if getattr(sys, 'frozen', False):
+            exe_path = sys.executable
+        else:
+            exe_path = os.path.abspath(sys.argv[0])
+
+        # 获取图标路径 — 必须是持久路径（不能用 PyInstaller 临时目录）
+        from utils.constants import get_base_dir, get_runtime_dir
+        if getattr(sys, 'frozen', False):
+            # 打包模式：将图标复制到 EXE 旁边
+            src_icon = os.path.join(get_base_dir(), "assets", "file_icon.ico")
+            dst_icon = os.path.join(get_runtime_dir(), "file_icon.ico")
+            if os.path.exists(src_icon):
+                try:
+                    import shutil
+                    shutil.copy2(src_icon, dst_icon)
+                except Exception:
+                    pass
+            icon_path = dst_icon if os.path.exists(dst_icon) else exe_path
+        else:
+            icon_path = os.path.join(get_base_dir(), "assets", "file_icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = exe_path
+
+        # 构建注册表命令（写入 HKCU，无需管理员）
+        reg_commands = []
+        for ext, prog_id, desc in [
+            (".tatlas", "TexturesAtlasView.tatlas", "合图规划存档"),
+            (".tcheck", "TexturesAtlasView.tcheck", "合图检查存档"),
+        ]:
+            reg_commands.extend([
+                f'reg add "HKCU\\Software\\Classes\\{ext}" /ve /d "{prog_id}" /f',
+                f'reg add "HKCU\\Software\\Classes\\{prog_id}" /ve /d "{desc}" /f',
+                f'reg add "HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon" /ve /d "\\"{icon_path}\\"" /f',
+                f'reg add "HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command" /ve /d "\\"{exe_path}\\" \\"%1\\"" /f',
+            ])
+
+        try:
+            for cmd in reg_commands:
+                subprocess.run(cmd, shell=True, check=True,
+                               capture_output=True, timeout=10)
+
+            # 通知 Explorer 刷新图标缓存
+            import ctypes
+            SHCNE_ASSOCCHANGED = 0x08000000
+            SHCNF_IDLIST = 0x0000
+            ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
+
+            QMessageBox.information(
+                self, "文件关联",
+                "文件关联注册成功！\n\n"
+                f"• .tatlas → 合图规划存档\n"
+                f"• .tcheck → 合图检查存档\n\n"
+                f"现在双击这两种文件即可直接用 TexturesAtlasView 打开。\n"
+                f"（如果图标未立即刷新，请注销并重新登录或重启资源管理器）"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "文件关联",
+                f"注册文件关联失败:\n{e}\n\n"
+                f"请尝试以管理员身份运行程序后再试。"
+            )
+
     # ---- Atlas selection ----
     def _on_atlas_selected(self, atlas_id: str):
         atlas = self._project.find_atlas(atlas_id)
@@ -1060,36 +1138,51 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "追加失败", f"无法追加存档:\n{e}")
 
-    # ---- Drag & Drop (.tatlas file) ----
+    # ---- Drag & Drop (.tatlas / .tcheck file) ----
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """主窗口拖入事件：接受 .tatlas 文件"""
+        """主窗口拖入事件：接受 .tatlas 和 .tcheck 文件"""
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
                 local_path = url.toLocalFile()
-                if local_path and local_path.lower().endswith(PROJECT_FILE_EXTENSION):
-                    event.acceptProposedAction()
-                    return
+                if local_path:
+                    lower = local_path.lower()
+                    if lower.endswith(PROJECT_FILE_EXTENSION) or lower.endswith(REVERSE_FILE_EXTENSION):
+                        event.acceptProposedAction()
+                        return
         # 不拦截其他拖放（让子组件处理图片拖入等）
         event.ignore()
 
     def dropEvent(self, event: QDropEvent):
-        """主窗口拖入放下：打开或追加 .tatlas 文件"""
+        """主窗口拖入放下：根据文件类型自动打开对应模式"""
         if not event.mimeData().hasUrls():
             event.ignore()
             return
 
         tatlas_paths = []
+        tcheck_paths = []
         for url in event.mimeData().urls():
             local_path = url.toLocalFile()
-            if local_path and local_path.lower().endswith(PROJECT_FILE_EXTENSION):
-                tatlas_paths.append(local_path)
+            if local_path:
+                lower = local_path.lower()
+                if lower.endswith(PROJECT_FILE_EXTENSION):
+                    tatlas_paths.append(local_path)
+                elif lower.endswith(REVERSE_FILE_EXTENSION):
+                    tcheck_paths.append(local_path)
 
-        if not tatlas_paths:
+        if not tatlas_paths and not tcheck_paths:
             event.ignore()
             return
 
         event.acceptProposedAction()
 
+        # .tcheck 优先处理（切换到检查模式）
+        if tcheck_paths:
+            if self._current_mode != "reverse":
+                self._switch_to_reverse_mode()
+            self._load_reverse_project(tcheck_paths[0])
+            return
+
+        # .tatlas 处理
         if self._current_mode != "plan":
             self._switch_to_plan_mode()
 
@@ -1338,6 +1431,21 @@ class MainWindow(QMainWindow):
         else:
             # 首次启动，默认最大化
             self.showMaximized()
+
+    # ---- Open from command line args / file association ----
+    def open_file_from_args(self, file_path: str):
+        """通过命令行参数或文件关联打开存档"""
+        if not os.path.isfile(file_path):
+            return
+        lower = file_path.lower()
+        if lower.endswith(PROJECT_FILE_EXTENSION):
+            if self._current_mode != "plan":
+                self._switch_to_plan_mode()
+            self._load_project(file_path)
+        elif lower.endswith(REVERSE_FILE_EXTENSION):
+            if self._current_mode != "reverse":
+                self._switch_to_reverse_mode()
+            self._load_reverse_project(file_path)
 
     def closeEvent(self, event: QCloseEvent):
         if self._check_save():

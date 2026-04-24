@@ -708,6 +708,7 @@ class LibraryPanel(QWidget):
 
         # 绘制缩略图
         thumb_pixmap = None
+        is_source_missing = not os.path.exists(tex.original_path) and not tex.is_screenshot
         if tex.thumbnail_path and os.path.exists(tex.thumbnail_path):
             thumb_pixmap = QPixmap(tex.thumbnail_path)
         elif os.path.exists(tex.original_path):
@@ -729,6 +730,19 @@ class LibraryPanel(QWidget):
             px = tx + (thumb_rect_size - scaled.width()) // 2
             py = ty + (thumb_rect_size - scaled.height()) // 2
             painter.drawPixmap(px, py, scaled)
+            # 源文件缺失但有缩略图：左下角小标记提示
+            if is_source_missing:
+                miss_w, miss_h = 28, 14
+                miss_x = tx + 1
+                miss_y = ty + thumb_rect_size - miss_h - 1
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(200, 80, 80, 200))
+                painter.drawRoundedRect(miss_x, miss_y, miss_w, miss_h, 3, 3)
+                miss_font = QFont("Microsoft YaHei UI", 7, QFont.Weight.Bold)
+                painter.setFont(miss_font)
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(miss_x, miss_y, miss_w, miss_h,
+                                 Qt.AlignmentFlag.AlignCenter, "缺失")
         else:
             painter.fillRect(tx, ty, thumb_rect_size, thumb_rect_size, QColor(60, 60, 60))
             painter.setPen(QColor(200, 80, 80))
@@ -1261,25 +1275,19 @@ class LibraryPanel(QWidget):
 
     # ---- Refresh library ----
     def _on_refresh_library(self):
-        """刷新素材库：清除缩略图缓存并重新生成，检测图片变更"""
+        """刷新素材库：对有源文件的重新生成缩略图，缺失源文件的保留已有缩略图"""
         if not self._project.library:
             QMessageBox.information(self, "刷新", "素材库中没有素材。")
             return
 
         from PySide6.QtWidgets import QApplication
 
-        # 清除所有缩略图缓存
-        ImageService.clear_thumbnail_cache()
-
         missing_count = 0
         updated_count = 0
 
         for tex in self._project.library:
-            # 清除缩略图缓存路径
-            tex.thumbnail_path = None
-
             if os.path.exists(tex.original_path):
-                # 重新获取尺寸（检测图片是否更改）
+                # 源文件存在：重新获取尺寸 + 重新生成缩略图
                 new_size = ImageService.get_image_size(tex.original_path)
                 if new_size and new_size != tex.original_size:
                     tex.original_size = new_size
@@ -1289,6 +1297,8 @@ class LibraryPanel(QWidget):
                 if thumb:
                     tex.thumbnail_path = thumb
             else:
+                # 源文件缺失：保留已有缩略图（来自 base64 嵌入或之前的缓存）
+                # 不清空 thumbnail_path，保证缩略图仍能显示
                 missing_count += 1
 
         QApplication.processEvents()
@@ -1581,8 +1591,12 @@ class LibraryPanel(QWidget):
             return
 
         fmt_str = " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_FORMATS)
+        # 默认打开当前图片所在目录，如果源文件不存在则用默认位置
+        default_dir = ""
+        if tex.original_path and os.path.exists(os.path.dirname(tex.original_path)):
+            default_dir = os.path.dirname(tex.original_path)
         new_path, _ = QFileDialog.getOpenFileName(
-            self, f"为「{tex.name}」选择新的图片文件", "",
+            self, f"为「{tex.name}」选择新的图片文件", default_dir,
             f"图片文件 ({fmt_str});;所有文件 (*.*)"
         )
         if not new_path:

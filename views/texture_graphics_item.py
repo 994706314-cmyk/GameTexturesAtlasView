@@ -73,6 +73,8 @@ class TextureGraphicsItem(QGraphicsObject):
         self._is_colliding = False
         self._drag_start_pos = QPointF()
         self._is_dragging = False
+        self._drag_pending = False
+        self._press_scene_pos = QPointF()
         self._rest_pos = QPointF()
 
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsSelectable, True)
@@ -298,32 +300,50 @@ class TextureGraphicsItem(QGraphicsObject):
         self.update()
 
     # ---- Mouse events ----
+    _DRAG_THRESHOLD = 6  # 像素，超过此距离才进入拖拽
+
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._is_dragging = True
+            self._is_dragging = False
+            self._drag_pending = True  # 等待判断是点击还是拖拽
             self._drag_start_pos = self.pos()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.setZValue(100)
+            self._press_scene_pos = event.scenePos()
             self.clicked.emit(self.texture_id)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent):
+        if self._drag_pending and not self._is_dragging:
+            # 判断是否超过拖拽阈值
+            delta = event.scenePos() - self._press_scene_pos
+            if (abs(delta.x()) > self._DRAG_THRESHOLD or
+                    abs(delta.y()) > self._DRAG_THRESHOLD):
+                self._is_dragging = True
+                self._drag_pending = False
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.setZValue(100)
         if self._is_dragging:
             new_pos = self.mapToScene(event.pos()) - self.boundingRect().center()
             self.setPos(new_pos)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton and self._is_dragging:
-            self._is_dragging = False
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-            self.setZValue(1)
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._is_dragging:
+                # 拖拽结束 → 执行移动逻辑
+                self._is_dragging = False
+                self._drag_pending = False
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+                self.setZValue(1)
 
-            scene_pos = self.pos()
-            grid_x = max(0, round(scene_pos.x() / GRID_UNIT))
-            grid_y = max(0, round(scene_pos.y() / GRID_UNIT))
+                scene_pos = self.pos()
+                grid_x = max(0, round(scene_pos.x() / GRID_UNIT))
+                grid_y = max(0, round(scene_pos.y() / GRID_UNIT))
 
-            self.move_attempted.emit(self.texture_id, grid_x, grid_y, self)
+                self.move_attempted.emit(self.texture_id, grid_x, grid_y, self)
+            else:
+                # 单击选中（未超过拖拽阈值）
+                self._drag_pending = False
+                self.setSelected(True)
         super().mouseReleaseEvent(event)
 
     def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent):

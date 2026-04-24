@@ -20,6 +20,8 @@ a = Analysis(
         # 图标资源
         (os.path.join(ROOT, 'assets', 'icon.ico'), 'assets'),
         (os.path.join(ROOT, 'assets', 'icon.png'), 'assets'),
+        (os.path.join(ROOT, 'assets', 'file_icon.ico'), 'assets'),
+        (os.path.join(ROOT, 'assets', 'file_icon.png'), 'assets'),
     ],
     hiddenimports=[
         # PySide6 必要模块

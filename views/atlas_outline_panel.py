@@ -229,19 +229,55 @@ class AtlasOutlinePanel(QWidget):
         if not atlas:
             return
 
-        if atlas.placed_textures:
-            for pt in atlas.placed_textures:
-                max_grid = new_size // 16
-                if (pt.grid_x + pt.texture.grid_width > max_grid or
-                        pt.grid_y + pt.texture.grid_height > max_grid):
-                    QMessageBox.warning(
-                        self, "尺寸变更",
-                        f"缩小合图尺寸会导致部分贴图越界，请先移除越界的贴图。"
-                    )
-                    self.refresh()
-                    return
+        old_size = atlas.size
+        if new_size == old_size:
+            return
 
-        atlas.set_size(new_size)
+        if atlas.placed_textures:
+            # 尝试用 bin packer 将所有贴图重新排布到新尺寸
+            from services.bin_packer import MaxRectsBinPacker, PackRect
+            from models.placed_texture import PlacedTexture
+
+            rects = [
+                PackRect(
+                    id=pt.texture.id,
+                    width=pt.texture.display_width,
+                    height=pt.texture.display_height,
+                )
+                for pt in atlas.placed_textures
+            ]
+            packer = MaxRectsBinPacker(new_size, new_size)
+            results = packer.pack(rects)
+
+            if len(results) < len(atlas.placed_textures):
+                # 无法全部放入新尺寸
+                failed_count = len(atlas.placed_textures) - len(results)
+                QMessageBox.warning(
+                    self, "尺寸变更",
+                    f"无法将所有贴图排入 {new_size}×{new_size} 的合图中，"
+                    f"有 {failed_count} 张贴图放不下。\n\n"
+                    f"请先移除部分贴图或选择更大的合图尺寸。"
+                )
+                self.refresh()
+                return
+
+            # 重新排布成功：更新所有贴图位置
+            result_map = {r.id: r for r in results}
+            # 先清空再重建
+            old_placed = list(atlas.placed_textures)
+            atlas.placed_textures.clear()
+            atlas.set_size(new_size)
+
+            for pt in old_placed:
+                r = result_map.get(pt.texture.id)
+                if r:
+                    pt.grid_x = r.x // 16
+                    pt.grid_y = r.y // 16
+                    atlas.placed_textures.append(pt)
+            atlas._rebuild_grid()
+        else:
+            atlas.set_size(new_size)
+
         self.refresh()
         self.project_changed.emit()
 
