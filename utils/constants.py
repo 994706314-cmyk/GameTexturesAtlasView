@@ -221,7 +221,31 @@ DUPLICATE_MARK_COLORS = [
 REVERSE_MODE_VERSION = "1.0"
 REVERSE_FILE_EXTENSION = ".tcheck"
 REVERSE_FILE_FILTER = "检查模式存档 (*.tcheck);;所有文件 (*.*)"
-APP_VERSION = "1.9.7"
+APP_VERSION = "1.9.8"
+
+# 画质类型
+QUALITY_TIERS = [
+    ("None", "Normal", ""),     # (值, 显示名, 角标文字) — 无角标
+    ("High", "High", "H"),
+    ("VeryHigh", "VeryHigh", "VH"),
+    ("Extreme", "Extreme", "EX"),
+]
+QUALITY_TIER_COLORS = {
+    "High": "#4CAF50",       # 绿色
+    "VeryHigh": "#FF9800",   # 橙色
+    "Extreme": "#F44336",    # 红色
+}
+
+# 快捷分辨率预设（右键菜单用）
+QUICK_RESOLUTION_PRESETS = [
+    (512, 512),
+    (256, 256),
+    (128, 128),
+    (64, 64),
+    (512, 256),
+    (512, 128),
+    (512, 64),
+]
 
 # GitHub 仓库信息（用于检查更新）
 GITHUB_OWNER = "994706314-cmyk"

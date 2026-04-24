@@ -1,7 +1,0 @@
-usage: release.py [-h] --version VERSION [--token TOKEN]
-                  [--token-file TOKEN_FILE] [--exe EXE] [--notes NOTES]
-                  [--project-root PROJECT_ROOT]
-release.py: error: unrecognized arguments: 更新内容：
-- 新增：设置假分辨率对话框支持修改贴图名称（同步更新缩略图和源文件名）
-- 新增：设置假分辨率对话框集成标记类型设置
-- 改进：更新日志仅保留最近3个版本记录

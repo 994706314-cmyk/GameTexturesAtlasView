@@ -29,6 +29,7 @@ from utils.constants import (
     PANEL_BORDER_RADIUS, DEFAULT_EXCLUDE_SUFFIXES, DEFAULT_WIDTH_COLOR_MAP,
     THUMBNAIL_QUALITY_HD, DEFAULT_THUMBNAIL_QUALITY,
     SCREENSHOT_DEFAULT_WIDTH, SCREENSHOT_DEFAULT_HEIGHT, SCREENSHOT_RESOLUTIONS,
+    QUICK_RESOLUTION_PRESETS, QUALITY_TIERS, QUALITY_TIER_COLORS,
 )
 from .size_edit_dialog import SizeEditDialog
 
@@ -820,6 +821,27 @@ class LibraryPanel(QWidget):
             painter.drawText(tag_x, tag_y, tag_w, tag_h,
                              Qt.AlignmentFlag.AlignCenter, tag_text)
 
+        # 画质类型角标（右下角）
+        qt = tex.quality_tier if hasattr(tex, 'quality_tier') else "None"
+        if qt and qt != "None":
+            qt_badge_map = {t[0]: t[2] for t in QUALITY_TIERS}
+            qt_text = qt_badge_map.get(qt, "")
+            if qt_text:
+                qt_color = QUALITY_TIER_COLORS.get(qt, "#666666")
+                qt_font = QFont("Microsoft YaHei UI", 7, QFont.Weight.Bold)
+                painter.setFont(qt_font)
+                fm_qt = painter.fontMetrics()
+                qt_w = max(18, fm_qt.horizontalAdvance(qt_text) + 6)
+                qt_h = 14
+                qt_x = tx + thumb_rect_size - qt_w - 1
+                qt_y = ty + thumb_rect_size - text_h - qt_h - 3  # 在规划尺寸标签上方
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(qt_color))
+                painter.drawRoundedRect(qt_x, qt_y, qt_w, qt_h, 3, 3)
+                painter.setPen(QColor("#FFFFFF"))
+                painter.drawText(qt_x, qt_y, qt_w, qt_h,
+                                 Qt.AlignmentFlag.AlignCenter, qt_text)
+
         painter.end()
         return QIcon(QPixmap.fromImage(img))
 
@@ -1434,9 +1456,19 @@ class LibraryPanel(QWidget):
         ids = self._get_selected_texture_ids()
         count = len(ids)
 
-        edit_action = menu.addAction(f"设置分辨率 ({count} 张)" if count > 1 else "设置分辨率")
+        # ---- 设置分辨率子菜单 ----
+        res_menu = menu.addMenu(f"设置分辨率 ({count} 张)" if count > 1 else "设置分辨率")
+        res_menu.setStyleSheet(menu.styleSheet())
 
-        # 标记子菜单
+        quick_res_actions = {}
+        for w, h in QUICK_RESOLUTION_PRESETS:
+            label = f"{w}×{h}"
+            act = res_menu.addAction(label)
+            quick_res_actions[act] = (w, h)
+        res_menu.addSeparator()
+        detail_res_action = res_menu.addAction("详细设置...")
+
+        # ---- 标记子菜单 ----
         tag_menu = menu.addMenu(f"标记类型 ({count} 张)" if count > 1 else "标记类型")
         tag_menu.setStyleSheet(menu.styleSheet())
         tag_options = [
@@ -1454,12 +1486,41 @@ class LibraryPanel(QWidget):
         tag_menu.addSeparator()
         clear_tag_action = tag_menu.addAction("✕ 清除标记")
 
+        # ---- 画质类型子菜单 ----
+        quality_menu = menu.addMenu(f"画质类型 ({count} 张)" if count > 1 else "画质类型")
+        quality_menu.setStyleSheet(menu.styleSheet())
+        quality_actions = {}
+        for tier_val, tier_display, tier_badge in QUALITY_TIERS:
+            badge_hint = f" [{tier_badge}]" if tier_badge else ""
+            act = quality_menu.addAction(f"{tier_display}{badge_hint}")
+            quality_actions[act] = tier_val
+
+        # ---- 重新导入 ----
+        menu.addSeparator()
+        reimport_action = menu.addAction("用新文件重新导入")
+
         open_loc_action = menu.addAction("在资源管理器中显示")
         menu.addSeparator()
         remove_action = menu.addAction(f"从素材库移除 ({count} 张)" if count > 1 else "从素材库移除")
 
         action = menu.exec(widget.mapToGlobal(pos))
-        if action == edit_action:
+        if not action:
+            return
+
+        if action in quick_res_actions:
+            new_w, new_h = quick_res_actions[action]
+            changed = False
+            for tid in ids:
+                tex = self._project.find_texture(tid)
+                if tex and tex.display_size != (new_w, new_h):
+                    tex.display_size = (new_w, new_h)
+                    changed = True
+            if changed:
+                self.refresh()
+                self._skip_external_refresh = True
+                self.project_changed.emit()
+                self._skip_external_refresh = False
+        elif action == detail_res_action:
             self._edit_texture_size(ids)
         elif action in tag_actions:
             tag_val = tag_actions[action]
@@ -1480,6 +1541,18 @@ class LibraryPanel(QWidget):
             self._skip_external_refresh = True
             self.project_changed.emit()
             self._skip_external_refresh = False
+        elif action in quality_actions:
+            qt_val = quality_actions[action]
+            for tid in ids:
+                tex = self._project.find_texture(tid)
+                if tex:
+                    tex.quality_tier = qt_val
+            self.refresh()
+            self._skip_external_refresh = True
+            self.project_changed.emit()
+            self._skip_external_refresh = False
+        elif action == reimport_action:
+            self._on_reimport_texture(ids)
         elif action == open_loc_action:
             if ids:
                 tex = self._project.find_texture(ids[0])
@@ -1496,6 +1569,51 @@ class LibraryPanel(QWidget):
             self._skip_external_refresh = True
             self.project_changed.emit()
             self._skip_external_refresh = False
+
+    def _on_reimport_texture(self, texture_ids: List[str]):
+        """用新文件重新导入选中的贴图（保留软件内名称和设置）"""
+        if not texture_ids:
+            return
+
+        # 仅对第一个选中的素材执行重新导入
+        tex = self._project.find_texture(texture_ids[0])
+        if not tex:
+            return
+
+        fmt_str = " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_FORMATS)
+        new_path, _ = QFileDialog.getOpenFileName(
+            self, f"为「{tex.name}」选择新的图片文件", "",
+            f"图片文件 ({fmt_str});;所有文件 (*.*)"
+        )
+        if not new_path:
+            return
+
+        # 获取新图片尺寸
+        new_size = ImageService.get_image_size(new_path)
+        if not new_size:
+            QMessageBox.warning(self, "重新导入", "无法读取所选图片的尺寸。")
+            return
+
+        # 更新贴图数据，保留软件内名称
+        tex.original_path = new_path
+        tex.original_size = new_size
+
+        # 清除旧缩略图缓存，重新生成
+        tex.thumbnail_path = None
+        thumb = self._generate_thumbnail(new_path)
+        if thumb:
+            tex.thumbnail_path = thumb
+
+        self.refresh()
+        self._skip_external_refresh = True
+        self.project_changed.emit()
+        self._skip_external_refresh = False
+
+        main_win = self.window()
+        if hasattr(main_win, 'statusBar'):
+            main_win.statusBar().showMessage(
+                f"已为「{tex.name}」重新导入图片: {os.path.basename(new_path)}", 5000
+            )
 
     def _open_in_explorer(self, file_path: str):
         file_path = os.path.normpath(file_path)

@@ -150,6 +150,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        self._find_missing_action = QAction("查找缺失文件(&M)", self)
+        self._find_missing_action.triggered.connect(self._on_find_missing_files)
+        file_menu.addAction(self._find_missing_action)
+
+        file_menu.addSeparator()
+
         self._export_excel_action = QAction("导出 Excel(&E)", self)
         self._export_excel_action.triggered.connect(lambda: self._on_export_excel(False))
         file_menu.addAction(self._export_excel_action)
@@ -788,6 +794,69 @@ class MainWindow(QMainWindow):
             deleted = ScreenshotService.clear_screenshots()
             QMessageBox.information(
                 self, "清理完成", f"已删除 {deleted} 个截图文件。"
+            )
+
+    # ---- Find Missing Files ----
+    def _on_find_missing_files(self):
+        """查找缺失文件：用户选择文件夹，在其子目录中按同名文件恢复丢失的图片链接"""
+        if not self._project.library:
+            QMessageBox.information(self, "查找缺失文件", "素材库中没有素材。")
+            return
+
+        # 先统计缺失数量
+        missing_textures = [
+            tex for tex in self._project.library
+            if not os.path.exists(tex.original_path)
+        ]
+        if not missing_textures:
+            QMessageBox.information(self, "查找缺失文件", "所有素材文件均正常，没有缺失的文件。")
+            return
+
+        dir_path = QFileDialog.getExistingDirectory(
+            self, f"选择查找目录（当前缺失 {len(missing_textures)} 个文件）"
+        )
+        if not dir_path:
+            return
+
+        # 扫描目录，建立 文件名→路径 映射
+        from services.image_service import ImageService
+        name_to_path = {}
+        for root, _, files in os.walk(dir_path):
+            for f in files:
+                ext = os.path.splitext(f)[1].lower()
+                if ext in ('.png', '.jpg', '.jpeg', '.tga', '.bmp', '.psd'):
+                    name_lower = f.lower()
+                    if name_lower not in name_to_path:
+                        name_to_path[name_lower] = os.path.join(root, f)
+
+        recovered_count = 0
+        for tex in missing_textures:
+            # 用原始路径的文件名匹配
+            orig_filename = os.path.basename(tex.original_path).lower()
+            if orig_filename in name_to_path:
+                new_path = name_to_path[orig_filename]
+                new_size = ImageService.get_image_size(new_path)
+                if new_size:
+                    tex.original_path = new_path
+                    tex.original_size = new_size
+                    # 重新生成缩略图
+                    tex.thumbnail_path = None
+                    thumb = ImageService.generate_thumbnail(new_path)
+                    if thumb:
+                        tex.thumbnail_path = thumb
+                    recovered_count += 1
+
+        if recovered_count > 0:
+            self._library_panel.refresh()
+            self._on_project_changed()
+            QMessageBox.information(
+                self, "查找缺失文件",
+                f"恢复了 {recovered_count} / {len(missing_textures)} 个缺失文件。"
+            )
+        else:
+            QMessageBox.information(
+                self, "查找缺失文件",
+                f"在所选目录中未找到匹配的文件。\n共有 {len(missing_textures)} 个文件缺失。"
             )
 
     # ---- Atlas selection ----

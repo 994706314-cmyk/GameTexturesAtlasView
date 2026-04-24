@@ -13,7 +13,7 @@ from PySide6.QtGui import (
     QLinearGradient,
 )
 
-from utils.constants import GRID_UNIT, COLOR_PRIMARY, COLOR_COLLISION
+from utils.constants import GRID_UNIT, COLOR_PRIMARY, COLOR_COLLISION, QUALITY_TIER_COLORS, QUALITY_TIERS
 
 
 # 模块级流畅模式标志（由 MainWindow 在切换时设置）
@@ -50,11 +50,13 @@ class TextureGraphicsItem(QGraphicsObject):
                  grid_w: int, grid_h: int,
                  thumbnail_path: str = None,
                  tag: str = "",
+                 quality_tier: str = "None",
                  parent=None):
         super().__init__(parent)
         self.texture_id = texture_id
         self._name = name
         self._tag = tag
+        self._quality_tier = quality_tier
         self._grid_w = grid_w
         self._grid_h = grid_h
         self._pixel_w = grid_w * GRID_UNIT
@@ -227,6 +229,31 @@ class TextureGraphicsItem(QGraphicsObject):
             painter.setPen(QColor(fg_hex))
             painter.drawText(QRectF(badge_x, badge_y, badge_w, badge_h),
                              Qt.AlignmentFlag.AlignCenter, self._tag)
+
+        # 画质类型角标（右下角）
+        if self._quality_tier and self._quality_tier != "None":
+            qt_badge_map = {t[0]: t[2] for t in QUALITY_TIERS}
+            qt_text = qt_badge_map.get(self._quality_tier, "")
+            if qt_text and min_dim >= 32:
+                qt_color = QUALITY_TIER_COLORS.get(self._quality_tier, "#666666")
+                qt_badge_w = max(20, min(28, self._pixel_w // 5))
+                qt_badge_h = max(14, min(18, self._pixel_h // 6))
+                qt_x = self._pixel_w - qt_badge_w - 2
+                qt_y = self._pixel_h - qt_badge_h - 2
+                # 偏移避开底部尺寸标签
+                if min_dim >= 32:
+                    size_bg_h = min(22, int(self._pixel_h * 0.25))
+                    qt_y = self._pixel_h - size_bg_h - qt_badge_h - 2
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(qt_color))
+                painter.drawRoundedRect(QRectF(qt_x, qt_y, qt_badge_w, qt_badge_h), 3, 3)
+                qt_font_size = max(6, min(9, qt_badge_w // 3))
+                qt_font = QFont("Microsoft YaHei UI", qt_font_size)
+                qt_font.setBold(True)
+                painter.setFont(qt_font)
+                painter.setPen(QColor("#FFFFFF"))
+                painter.drawText(QRectF(qt_x, qt_y, qt_badge_w, qt_badge_h),
+                                 Qt.AlignmentFlag.AlignCenter, qt_text)
 
     def _truncate_name(self, name: str, max_chars: int) -> str:
         if len(name) <= max_chars:

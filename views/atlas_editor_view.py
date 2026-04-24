@@ -522,6 +522,7 @@ class AtlasEditorView(QWidget):
             grid_h=pt.texture.grid_height,
             thumbnail_path=pt.texture.thumbnail_path,
             tag=pt.texture.tag,
+            quality_tier=getattr(pt.texture, 'quality_tier', 'None'),
         )
         pixel_pos = QPointF(pt.pixel_x, pt.pixel_y)
         item.setPos(pixel_pos)
